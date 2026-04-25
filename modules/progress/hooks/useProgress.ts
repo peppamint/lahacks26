@@ -8,6 +8,11 @@ export function useProgress() {
 
   useEffect(() => {
     bus.on('lesson:completed', async (data) => {
+      if (!supabase) {
+        console.error('Supabase is not configured.')
+        return
+      }
+
       // TODO: save progress event to Supabase and refresh stats
       const { error } = await supabase.from('progress_events').insert({
         lesson_id: data.lessonId,
