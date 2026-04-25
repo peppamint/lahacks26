@@ -13,17 +13,23 @@ type TtsRequest = {
   }
 }
 
-Deno.serve(async (req) => {
+const deno = globalThis as any
+const denoEnv = deno.Deno?.env
+
+deno.Deno.serve(async (req: Request) => {
+  console.log('[tts-proxy] request method=', req.method)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   if (req.method !== 'POST') {
+    console.error('[tts-proxy] invalid method:', req.method)
     return new Response('Method not allowed', { status: 405, headers: corsHeaders })
   }
 
-  const elevenLabsApiKey = Deno.env.get('ELEVENLABS_API_KEY') ?? ''
+  const elevenLabsApiKey = denoEnv?.get('ELEVENLABS_API_KEY') ?? ''
   if (!elevenLabsApiKey) {
+    console.error('[tts-proxy] missing ELEVENLABS_API_KEY secret')
     return new Response('Missing ELEVENLABS_API_KEY in function secrets', {
       status: 500,
       headers: corsHeaders,
@@ -33,11 +39,13 @@ Deno.serve(async (req) => {
   let body: TtsRequest
   try {
     body = await req.json() as TtsRequest
-  } catch {
+  } catch (error) {
+    console.error('[tts-proxy] invalid JSON body', error)
     return new Response('Invalid JSON body', { status: 400, headers: corsHeaders })
   }
 
   if (!body.text?.trim()) {
+    console.error('[tts-proxy] missing text field')
     return new Response('text is required', { status: 400, headers: corsHeaders })
   }
 

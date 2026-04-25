@@ -16,8 +16,17 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
     body: blob,
   })
 
-  if (error) throw new Error(`Transcription failed: ${error.message}`)
-  if (!data?.transcript) throw new Error('Empty transcription returned')
+  if (error) {
+    console.error('[services/whisper] function invoke error', error)
+    const status = (error as any)?.status ?? 'unknown'
+    const details = JSON.stringify(error, null, 2)
+    throw new Error(`Transcription failed: ${error.message} (status=${status})\n${details}`)
+  }
+
+  if (!data?.transcript) {
+    console.error('[services/whisper] invalid function response', data)
+    throw new Error('Empty transcription returned')
+  }
 
   return data.transcript
 }
