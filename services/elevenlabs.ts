@@ -1,8 +1,18 @@
-// ?? operator: if value is undefined/null, use following value (e.g. empty string)
-const TTS_PROXY_URL = process.env['EXPO_PUBLIC_TTS_PROXY_URL'] ?? ''
-const ELEVENLABS_API_KEY = process.env['EXPO_PUBLIC_ELEVENLABS_API_KEY'] ?? ''
-const ELEVENLABS_VOICE_ID = process.env['EXPO_PUBLIC_ELEVENLABS_VOICE_ID'] ?? '21m00Tcm4TlvDq8ikWAM'
-const ELEVENLABS_MODEL_ID = process.env['EXPO_PUBLIC_ELEVENLABS_MODEL_ID'] ?? 'eleven_multilingual_v2'
+function getTtsProxyUrl() {
+  return process.env['EXPO_PUBLIC_TTS_PROXY_URL'] ?? ''
+}
+
+function getElevenLabsApiKey() {
+  return process.env['EXPO_PUBLIC_ELEVENLABS_API_KEY'] ?? ''
+}
+
+function getElevenLabsVoiceId() {
+  return process.env['EXPO_PUBLIC_ELEVENLABS_VOICE_ID'] ?? '21m00Tcm4TlvDq8ikWAM'
+}
+
+function getElevenLabsModelId() {
+  return process.env['EXPO_PUBLIC_ELEVENLABS_MODEL_ID'] ?? 'eleven_multilingual_v2'
+}
 
 // given text (name of the text to speak), returns ArrayBuffer (output audio data)
 export async function synthesizeSpeech(text: string): Promise<ArrayBuffer> {
@@ -12,12 +22,16 @@ export async function synthesizeSpeech(text: string): Promise<ArrayBuffer> {
   }
 
   // endpoint URL (address of specific backend function on a server)
-  const useProxy = Boolean(TTS_PROXY_URL) && !TTS_PROXY_URL.includes('<your-project>')
+  const ttsProxyUrl = getTtsProxyUrl()
+  const apiKey = getElevenLabsApiKey()
+  const voiceId = getElevenLabsVoiceId()
+  const modelId = getElevenLabsModelId()
+  const useProxy = Boolean(ttsProxyUrl) && !ttsProxyUrl.includes('<your-project>')
   const url = useProxy
-    ? TTS_PROXY_URL
-    : `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`
+    ? ttsProxyUrl
+    : `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`
 
-  if (!useProxy && !ELEVENLABS_API_KEY) {
+  if (!useProxy && !apiKey) {
     throw new Error('Missing EXPO_PUBLIC_ELEVENLABS_API_KEY (or set EXPO_PUBLIC_TTS_PROXY_URL)')
   }
   
@@ -27,12 +41,12 @@ export async function synthesizeSpeech(text: string): Promise<ArrayBuffer> {
     headers: {
       Accept: 'audio/mpeg',
       'Content-Type': 'application/json',
-      ...(useProxy ? {} : { 'xi-api-key': ELEVENLABS_API_KEY }),
+      ...(useProxy ? {} : { 'xi-api-key': apiKey }),
     },
     body: JSON.stringify({
       text,
-      ...(useProxy ? { voice_id: ELEVENLABS_VOICE_ID } : {}),
-      model_id: ELEVENLABS_MODEL_ID,
+      ...(useProxy ? { voice_id: voiceId } : {}),
+      model_id: modelId,
       voice_settings: {
         stability: 0.5,
         similarity_boost: 0.75,
