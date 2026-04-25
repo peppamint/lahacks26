@@ -15,6 +15,7 @@ import { respondPositively } from '../../services/claude'
 import { saveProfile } from '../../services/supabase'
 import { useStore } from '../../store'
 import { LEVEL_LABELS } from '../../constants/readingLevels'
+import { buildInitialSkillLevels } from '../../constants/skills'
 import { fetchNextPassage, finalizeDiagnostic, START_LEVEL, PASSAGE_COUNT } from './DiagnosticFlow'
 import type { DiagnosticPhase, ChatMessage, GeneratedPassage, PassageFeedback, PassageRating } from './types'
 import type { ReadingLevel } from '../../constants/readingLevels'
@@ -35,6 +36,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
   const userId = useStore((s) => s.userId)
   const setProfile = useStore((s) => s.setProfile)
   const setReadingLevel = useStore((s) => s.setReadingLevel)
+  const setSkillLevels = useStore((s) => s.setSkillLevels)
 
   // ─── Conversation state ──────────────────────────────────────────────────
   // phase drives which UI (text input vs. rating buttons) is visible.
@@ -219,8 +221,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
         goal: userGoal || 'Reading diagnostic completed',
         domain: 'general' as const,
         readingLevel: level,
+        skillLevels: buildInitialSkillLevels(level),
       }
       setReadingLevel(level)
+      setSkillLevels(profile.skillLevels)
       setProfile(profile)
 
       if (!userId) {

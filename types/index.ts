@@ -1,5 +1,6 @@
 export type { ReadingLevel } from '../constants/readingLevels'
 export type { Domain } from '../constants/domains'
+export type { SkillCategory, SkillLevels } from '../constants/skills'
 
 // ─── User / Diagnostic ────────────────────────────────────────────────────────
 
@@ -8,6 +9,7 @@ export interface UserProfile {
   goal: string
   domain: import('../constants/domains').Domain
   readingLevel: import('../constants/readingLevels').ReadingLevel
+  skillLevels?: import('../constants/skills').SkillLevels
 }
 
 export interface DiagnosticResult {
