@@ -16,7 +16,10 @@ async function callProxy(body: {
 }): Promise<string> {
   const res = await fetch(PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env['EXPO_PUBLIC_SUPABASE_ANON_KEY'] ?? ''}`,
+    },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Claude proxy error: ${res.status}`)
