@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-expo-app@latest . --template blank-typescript)",
+      "Read(//private/tmp/**)",
+      "Bash(npx create-expo-app@latest lahacks26-scaffold --template blank-typescript)",
+      "Bash(cp /tmp/lahacks26-scaffold/package.json /Users/wonupark/get_lit/lahacks26/)",
+      "Bash(cp /tmp/lahacks26-scaffold/package-lock.json /Users/wonupark/get_lit/lahacks26/)",
+      "Bash(cp /tmp/lahacks26-scaffold/tsconfig.json /Users/wonupark/get_lit/lahacks26/)",
+      "Bash(cp /tmp/lahacks26-scaffold/app.json /Users/wonupark/get_lit/lahacks26/)",
+      "Bash(cp /tmp/lahacks26-scaffold/index.ts /Users/wonupark/get_lit/lahacks26/)",
+      "Bash(npx expo *)",
+      "Bash(npm install *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(node /Users/wonupark/get_lit/lahacks26/node_modules/typescript/bin/tsc --version)",
+      "Bash(node /Users/wonupark/get_lit/lahacks26/node_modules/typescript/bin/tsc --noEmit)"
+    ]
+  }
+}
