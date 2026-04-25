@@ -1,79 +1,84 @@
 import React, { useEffect, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { View, Text, StyleSheet } from 'react-native'
+import { NavigationContainer } from '@react-navigation/native'
+import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack'
 import { StatusBar } from 'expo-status-bar'
-import { DiagnosticScreen } from './modules/diagnostic'
 import { ensureAuthSession } from './services/supabase'
 import { useStore } from './store'
+import { DiagnosticScreen } from './modules/diagnostic'
+
+type RootStackParamList = {
+  Diagnostic: undefined
+  Home: undefined
+}
+
+const Stack = createNativeStackNavigator<RootStackParamList>()
+
+function HomeScreen() {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>GetLit</Text>
+      <Text style={styles.subtitle}>You're all set! Lessons coming soon.</Text>
+      <StatusBar style="auto" />
+    </View>
+  )
+}
 
 export default function App() {
-  // Simple local screen state until full navigation is added.
-  const [screen, setScreen] = useState<'home' | 'diagnostic'>('home')
-  const [authStatus, setAuthStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [authMessage, setAuthMessage] = useState('')
-  const setUserId = useStore((state) => state.setUserId)
+  const setUserId = useStore((s) => s.setUserId)
+  const [ready, setReady] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
-    const bootstrapAuth = async () => {
+    async function initAuth() {
       try {
         const { userId } = await ensureAuthSession()
         setUserId(userId)
-        setAuthStatus('ready')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to initialize auth session.'
-        setAuthStatus('error')
-        setAuthMessage(message)
+        setAuthError(message)
+      } finally {
+        setReady(true)
       }
     }
 
-    void bootstrapAuth()
+    void initAuth()
   }, [setUserId])
 
-  if (screen === 'diagnostic') {
+  if (!ready) {
     return (
-      <>
-        <DiagnosticScreen onBack={() => setScreen('home')} />
-        <StatusBar style="auto" />
-      </>
+      <View style={styles.container}>
+        <Text style={styles.title}>GetLit</Text>
+        <Text style={styles.subtitle}>Connecting to Supabase...</Text>
+      </View>
+    )
+  }
+
+  if (authError) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>GetLit</Text>
+        <Text style={styles.subtitle}>{authError}</Text>
+      </View>
     )
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>GetLit</Text>
-      <Text style={styles.subtitle}>Adult Literacy App</Text>
-      <Text style={styles.authStatus}>
-        {authStatus === 'loading' && 'Connecting to Supabase...'}
-        {authStatus === 'ready' && 'Supabase session ready'}
-        {authStatus === 'error' && `Auth error: ${authMessage}`}
-      </Text>
-      <Pressable style={styles.button} onPress={() => setScreen('diagnostic')}>
-        <Text style={styles.buttonText}>Start Diagnostic</Text>
-      </Pressable>
-      <StatusBar style="auto" />
-    </View>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Diagnostic" screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Diagnostic">
+          {({ navigation }: NativeStackScreenProps<RootStackParamList, 'Diagnostic'>) => (
+            <DiagnosticScreen onComplete={() => navigation.replace('Home')} />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Home" component={HomeScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   title: { fontSize: 32, fontWeight: '800', color: '#4F46E5' },
-  subtitle: { fontSize: 16, color: '#6B7280', marginTop: 8 },
-  authStatus: {
-    marginTop: 12,
-    color: '#374151',
-    paddingHorizontal: 24,
-    textAlign: 'center',
-  },
-  button: {
-    marginTop: 20,
-    backgroundColor: '#4F46E5',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  subtitle: { fontSize: 16, color: '#6B7280', marginTop: 8, paddingHorizontal: 24, textAlign: 'center' },
 })

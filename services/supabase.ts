@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import type { UserProfile } from '../types'
+import type { WordBankEntry } from '../types'
+import type { ReadingLevel } from '../constants/readingLevels'
 
 const supabaseUrl = process.env['EXPO_PUBLIC_SUPABASE_URL'] ?? ''
 const supabaseAnonKey = process.env['EXPO_PUBLIC_SUPABASE_ANON_KEY'] ?? ''
@@ -15,13 +17,46 @@ function assertSupabaseConfigured() {
   }
 }
 
-export async function getOrCreateUserId(): Promise<string> {
+function getSupabaseClient() {
   assertSupabaseConfigured()
   const client = supabase
-
   if (!client) {
     throw new Error('Supabase client is not initialized.')
   }
+  return client
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+export async function signInAnonymously() {
+  const client = getSupabaseClient()
+  const { data, error } = await client.auth.signInAnonymously()
+  if (error) throw error
+  return data.user
+}
+
+export async function signUpWithEmail(email: string, password: string) {
+  const client = getSupabaseClient()
+  const { data, error } = await client.auth.signUp({ email, password })
+  if (error) throw error
+  return data.user
+}
+
+export async function signInWithEmail(email: string, password: string) {
+  const client = getSupabaseClient()
+  const { data, error } = await client.auth.signInWithPassword({ email, password })
+  if (error) throw error
+  return data.user
+}
+
+export async function getCurrentUser() {
+  const client = getSupabaseClient()
+  const { data: { user } } = await client.auth.getUser()
+  return user
+}
+
+export async function getOrCreateUserId(): Promise<string> {
+  const client = getSupabaseClient()
 
   const {
     data: { user },
@@ -62,22 +97,78 @@ export async function ensureAuthSession(): Promise<{ userId: string }> {
   return { userId }
 }
 
+// ─── Profiles ─────────────────────────────────────────────────────────────────
+
 export async function upsertProfile(profile: UserProfile): Promise<void> {
-  assertSupabaseConfigured()
-  const client = supabase
-
-  if (!client) {
-    throw new Error('Supabase client is not initialized.')
-  }
-
+  const client = getSupabaseClient()
   const { error } = await client.from('profiles').upsert({
     id: profile.userId,
     goal: profile.goal,
     domain: profile.domain,
     reading_level: profile.readingLevel,
   })
+  if (error) throw error
+}
 
-  if (error) {
-    throw new Error(error.message)
+export const saveProfile = upsertProfile
+
+export async function getProfile(userId: string): Promise<UserProfile | null> {
+  const client = getSupabaseClient()
+  const { data, error } = await client
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+  if (error) return null
+  return {
+    userId: data.id,
+    goal: data.goal,
+    domain: data.domain,
+    readingLevel: data.reading_level,
   }
+}
+
+// ─── Progress ─────────────────────────────────────────────────────────────────
+
+export async function saveProgressEvent(
+  userId: string,
+  lessonId: string,
+  lessonType: 'micro' | 'macro',
+  score: number,
+  readingLevel: ReadingLevel,
+): Promise<void> {
+  const client = getSupabaseClient()
+  const { error } = await client.from('progress_events').insert({
+    user_id: userId,
+    lesson_id: lessonId,
+    lesson_type: lessonType,
+    score,
+    reading_level: readingLevel,
+  })
+  if (error) throw error
+}
+
+// ─── Word Bank ────────────────────────────────────────────────────────────────
+
+export async function saveWord(userId: string, word: string, context: string): Promise<void> {
+  const client = getSupabaseClient()
+  const { error } = await client.from('word_bank').insert({ user_id: userId, word, context })
+  if (error) throw error
+}
+
+export async function getWordBank(userId: string): Promise<WordBankEntry[]> {
+  const client = getSupabaseClient()
+  const { data, error } = await client
+    .from('word_bank')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data.map((row) => ({
+    id: row.id,
+    word: row.word,
+    context: row.context,
+    pronunciationUrl: row.pronunciation_url,
+    createdAt: row.created_at,
+  }))
 }
