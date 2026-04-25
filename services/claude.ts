@@ -1,9 +1,11 @@
 import type { ReadingLevel } from '../constants/readingLevels'
 import { LEVEL_LABELS, READING_LEVELS } from '../constants/readingLevels'
-import type { Message, Question, StumbleResult } from '../types'
-import type { PassageFeedback } from '../modules/diagnostic/types'
+import type { Domain } from '../constants/domains'
+import { DOMAIN_LABELS } from '../constants/domains'
+import type { Message, Question, StumbleResult, StumbledWord } from '../types'
+import type { PassageFeedback, GoalProfile } from '../modules/diagnostic/types'
 
-export const SONNET = 'claude-sonnet-4-20250514'
+export const SONNET = 'claude-sonnet-4-5'
 export const HAIKU = 'claude-haiku-4-5-20251001'
 
 // Reads from env — must be a server-side proxy URL; never embed ANTHROPIC_API_KEY in the bundle.
@@ -140,6 +142,132 @@ export async function estimateReadingLevel(feedback: PassageFeedback[]): Promise
   return justRight?.level ?? 'grade5'
 }
 
+// ─── Diagnostic: Step 1 — Goal conversation ───────────────────────────────────
+
+// Drives a single turn of the multi-turn goal conversation.
+// Claude responds conversationally and, once it has enough info, embeds a
+// <PROFILE> JSON block at the end of its message.
+//
+// Returns the cleaned reply (tag stripped) and the parsed profile (or null
+// if Claude isn't ready yet). Call in a loop until profile is non-null,
+// or the user hits the skip button after GOAL_TURN_LIMIT turns.
+export async function conductGoalTurn(
+  messages: Message[],
+): Promise<{ reply: string; profile: GoalProfile | null }> {
+  const raw = await callProxy({
+    model: SONNET,
+    system: `Your name is Reid. You are a warm, friendly literacy coach helping an adult learner.
+Ask exactly two questions, one at a time:
+1. What motivates you to improve your reading?
+2. What are your interests or hobbies?
+
+Keep each response to 1–2 sentences. Only ask a follow-up if their answer is genuinely unclear or too brief (e.g. just "yes" or "idk"). Do not try to categorize or box in their answers.
+
+Once you have both their motivation and interests, append EXACTLY this at the end of your message (the user will not see it):
+<PROFILE>{"motivation":"...","interests":"...","domain":"legal|work|parenting|news|social"}</PROFILE>
+
+For "domain", silently infer the closest fit from their interests — do NOT ask the user about it.
+Do not include <PROFILE> until you have both answers.`,
+    messages,
+    max_tokens: 512,
+  })
+
+  // Extract the hidden <PROFILE> block if present.
+  const profileMatch = raw.match(/<PROFILE>([\s\S]*?)<\/PROFILE>/)
+  let profile: GoalProfile | null = null
+  if (profileMatch) {
+    try {
+      profile = JSON.parse(profileMatch[1].replace(/```json|```/g, '').trim()) as GoalProfile
+    } catch {
+      console.error('[conductGoalTurn] Failed to parse profile:', profileMatch[1])
+    }
+  }
+
+  // Strip the tag from the displayed message.
+  const reply = raw.replace(/<PROFILE>[\s\S]*?<\/PROFILE>/, '').trim()
+  return { reply, profile }
+}
+
+// ─── Diagnostic: Step 3 — Domain passage generation ──────────────────────────
+
+// Generates a short real-world snippet from the learner's chosen domain
+// at their detected reading level. Used for domain-specific calibration.
+//
+// To add domain-specific context or templates, extend the domainContext map below.
+export async function generateDomainPassage(domain: Domain, level: ReadingLevel): Promise<string> {
+  const domainContext: Record<Domain, string> = {
+    legal:     'a lease clause, a court notice, or a government form',
+    work:      'a workplace memo, a job description, or an HR policy',
+    parenting: 'a school newsletter, a pediatric health tip, or a bedtime story excerpt',
+    news:      'a short news article, a weather report, or a community announcement',
+    social:    'a text message thread, a social media post, or an everyday conversation',
+  }
+  return callProxy({
+    model: HAIKU,
+    system: 'You are a reading assessment tool. Return only the passage text, no title, no explanation.',
+    messages: [
+      {
+        role: 'user',
+        content: `Write a realistic ${domainContext[domain]} (3–5 sentences) at a "${LEVEL_LABELS[level]}" reading level. It should feel authentic to the ${DOMAIN_LABELS[domain]} domain.`,
+      },
+    ],
+    max_tokens: 256,
+  })
+}
+
+// ─── Diagnostic: Finalization helpers ────────────────────────────────────────
+
+// Analyzes all stumbled words across the diagnostic and returns 1–3 skill
+// weakness labels (e.g. 'multi-syllable words', 'punctuation pausing').
+// Returns [] immediately if there are no stumbles — no API call made.
+//
+// To change the output format, edit the JSON shape in the prompt below.
+export async function analyzeWeakAreas(stumbles: StumbledWord[]): Promise<string[]> {
+  if (stumbles.length === 0) return []
+  const wordList = stumbles.map((s) => `"${s.word}" (context: "${s.context}")`).join(', ')
+  const raw = await callProxy({
+    model: HAIKU,
+    system: 'You are a reading assessment tool. Return only valid JSON.',
+    messages: [
+      {
+        role: 'user',
+        content: `Based on these stumbled words, identify 1–3 reading skill weak areas.\nWords: ${wordList}\nReturn JSON: {"weakAreas": ["...", "..."]}`,
+      },
+    ],
+    max_tokens: 128,
+  })
+  try {
+    const result = JSON.parse(raw.replace(/```json|```/g, '').trim()) as { weakAreas: string[] }
+    return result.weakAreas ?? []
+  } catch {
+    console.error('[analyzeWeakAreas] Failed to parse:', raw)
+    return []
+  }
+}
+
+// Generates a personalized 2-sentence first lesson suggestion for the learner
+// based on their goal, domain, detected reading level, and weak areas.
+// Uses Sonnet for richer, more personalized output.
+export async function generateFirstLesson(
+  goal: string,
+  domain: Domain,
+  level: ReadingLevel,
+  weakAreas: string[],
+): Promise<string> {
+  const weakAreaText = weakAreas.length > 0 ? `Weak areas: ${weakAreas.join(', ')}.` : ''
+  return callProxy({
+    model: SONNET,
+    system: 'Your name is Reid. You are a literacy coach. In exactly 2 sentences, suggest the learner\'s first lesson. Be specific, encouraging, and practical.',
+    messages: [
+      {
+        role: 'user',
+        content: `Learner goal: "${goal}". Domain: ${DOMAIN_LABELS[domain]}. Reading level: ${LEVEL_LABELS[level]}. ${weakAreaText} What should their first lesson be?`,
+      },
+    ],
+    max_tokens: 128,
+  })
+}
+
 export async function detectStumbleFromTranscript(
   expected: string,
   actual: string,
@@ -155,5 +283,5 @@ export async function detectStumbleFromTranscript(
     ],
     max_tokens: 512,
   })
-  return JSON.parse(raw) as StumbleResult
+  return JSON.parse(raw.replace(/```json|```/g, '').trim()) as StumbleResult
 }

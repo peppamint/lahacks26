@@ -1,26 +1,14 @@
-export type Domain =
-  | 'accounting'
-  | 'parenting'
-  | 'legal'
-  | 'healthcare'
-  | 'employment'
-  | 'housing'
-  | 'education'
-  | 'government'
-  | 'finance'
-  | 'general'
+// The 5 learner-facing domains used in the diagnostic and lesson modules.
+// To add a domain: add the value here, add a label below, and add sample
+// passages in services/claude.ts → generateDomainPassage().
+export type Domain = 'legal' | 'work' | 'parenting' | 'news' | 'social'
 
 export const DOMAIN_LABELS: Record<Domain, string> = {
-  accounting:  'Accounting & Tax',
-  parenting:   'Parenting & Family',
-  legal:       'Legal & Court',
-  healthcare:  'Healthcare & Medical',
-  employment:  'Employment & Work',
-  housing:     'Housing & Utilities',
-  education:   'Education & School',
-  government:  'Government & Benefits',
-  finance:     'Banking & Finance',
-  general:     'General / Everyday',
+  legal:     'Legal & Government',
+  work:      'Work & Professional',
+  parenting: 'Parenting & Family',
+  news:      'News & Current Events',
+  social:    'Social & Everyday',
 }
 
 export const DOMAINS: Domain[] = Object.keys(DOMAIN_LABELS) as Domain[]
