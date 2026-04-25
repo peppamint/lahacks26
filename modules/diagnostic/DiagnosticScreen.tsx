@@ -51,6 +51,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(false)
   const [userName, setUserName] = useState('')
+  const [userGoal, setUserGoal] = useState('')
 
   // ─── Passage state ───────────────────────────────────────────────────────
   // currentPassageLevel tracks the level of the last fetched passage so the
@@ -101,6 +102,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
         setPhase('goal')
 
       } else if (phase === 'goal') {
+        setUserGoal(text)
         // Claude (Haiku) generates a warm 1-sentence response to the user's goal.
         // To make this scripted instead, replace the respondPositively call with
         // a hardcoded string: addMessage({ role: 'reid', text: 'Great goal!' })
@@ -214,7 +216,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
       // once the goal/interest text is wired into a structured UserProfile.
       const profile = {
         userId,
-        goal: userName ? `Diagnostic for ${userName}` : 'Reading diagnostic completed',
+        goal: userGoal || 'Reading diagnostic completed',
         domain: 'general' as const,
         readingLevel: level,
       }
