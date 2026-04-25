@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { respondPositively } from '../../services/claude'
 import { saveProfile } from '../../services/supabase'
 import { useStore } from '../../store'
@@ -27,6 +28,7 @@ interface Props {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function DiagnosticScreen({ onComplete }: Props) {
+  const insets = useSafeAreaInsets()
   // Pull only the specific store values we need — do NOT destructure into one
   // object selector, as that creates a new object every render and causes an
   // infinite re-render loop.
@@ -102,7 +104,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
         // Claude (Haiku) generates a warm 1-sentence response to the user's goal.
         // To make this scripted instead, replace the respondPositively call with
         // a hardcoded string: addMessage({ role: 'reid', text: 'Great goal!' })
-        const reply = await respondPositively(text, 'goal')
+        const reply = await respondPositively(text, 'goal').catch((error) => {
+          console.error('[Diagnostic] respondPositively(goal) failed:', error)
+          return 'That is a great goal. Thanks for sharing.'
+        })
         addMessage({ role: 'reid', text: reply })
         await pause(400)
         addMessage({ role: 'reid', text: "What are your interests? For example: cooking, politics, sports, science, or anything else you enjoy." })
@@ -110,13 +115,25 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
       } else if (phase === 'interest') {
         // Same pattern as goal — Claude responds positively to the user's interests.
-        const reply = await respondPositively(text, 'interest')
+        const reply = await respondPositively(text, 'interest').catch((error) => {
+          console.error('[Diagnostic] respondPositively(interest) failed:', error)
+          return 'Awesome, that helps me personalize your learning path.'
+        })
         addMessage({ role: 'reid', text: reply })
         await pause(400)
         // This is the last text-input phase. After this message the passage loop starts.
         addMessage({ role: 'reid', text: "Great! Now let's figure out the best starting point for you. I'll show you a few short passages — just tell me if each one feels too easy, about right, or a bit tough." })
         setPhase('passage_intro')
-        await loadNextPassage(START_LEVEL, null)
+        try {
+          await loadNextPassage(START_LEVEL, null)
+        } catch (error) {
+          console.error('[Diagnostic] Initial passage load failed:', error)
+          addMessage({
+            role: 'reid',
+            text: "I'm having trouble loading the next passage right now. Please send one more message and I'll retry.",
+          })
+          setPhase('interest')
+        }
       }
     } finally {
       setLoading(false)
@@ -197,13 +214,31 @@ export function DiagnosticScreen({ onComplete }: Props) {
       // once the goal/interest text is wired into a structured UserProfile.
       const profile = {
         userId,
-        goal: '',
-        domain: 'general',
+        goal: userName ? `Diagnostic for ${userName}` : 'Reading diagnostic completed',
+        domain: 'general' as const,
         readingLevel: level,
-      } as const
+      }
       setReadingLevel(level)
       setProfile(profile)
-      await saveProfile(profile)
+
+      if (!userId) {
+        addMessage({
+          role: 'reid',
+          text: 'Your reading level is ready, but we could not find your account session. Restart the app to sync your profile.',
+        })
+      } else {
+        try {
+          await saveProfile(profile)
+        } catch (saveErr) {
+          console.error('[Diagnostic] saveProfile failed:', saveErr)
+          const msg =
+            saveErr instanceof Error ? saveErr.message : 'Could not save to the cloud.'
+          addMessage({
+            role: 'reid',
+            text: `Your level is saved on this device. Cloud sync failed: ${msg}`,
+          })
+        }
+      }
 
       // Announce the result across three messages for a more natural cadence.
       // To change the result messaging, edit the strings below.
@@ -234,9 +269,12 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingBottom: insets.bottom },
+      ]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={80}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}
     >
       {/* ── Chat bubble list ── */}
       <ScrollView

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { View, Text, StyleSheet } from 'react-native'
+import { Text, StyleSheet } from 'react-native'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { ensureAuthSession } from './services/supabase'
 import { useStore } from './store'
@@ -16,11 +17,11 @@ const Stack = createNativeStackNavigator<RootStackParamList>()
 
 function HomeScreen() {
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <Text style={styles.title}>GetLit</Text>
       <Text style={styles.subtitle}>You're all set! Lessons coming soon.</Text>
       <StatusBar style="auto" />
-    </View>
+    </SafeAreaView>
   )
 }
 
@@ -45,35 +46,31 @@ export default function App() {
     void initAuth()
   }, [setUserId])
 
-  if (!ready) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>GetLit</Text>
-        <Text style={styles.subtitle}>Connecting to Supabase...</Text>
-      </View>
-    )
-  }
-
-  if (authError) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>GetLit</Text>
-        <Text style={styles.subtitle}>{authError}</Text>
-      </View>
-    )
-  }
-
   return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Diagnostic" screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Diagnostic">
-          {({ navigation }: NativeStackScreenProps<RootStackParamList, 'Diagnostic'>) => (
-            <DiagnosticScreen onComplete={() => navigation.replace('Home')} />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Home" component={HomeScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      {!ready ? (
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <Text style={styles.title}>GetLit</Text>
+          <Text style={styles.subtitle}>Connecting to Supabase...</Text>
+        </SafeAreaView>
+      ) : authError ? (
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <Text style={styles.title}>GetLit</Text>
+          <Text style={styles.subtitle}>{authError}</Text>
+        </SafeAreaView>
+      ) : (
+        <NavigationContainer>
+          <Stack.Navigator initialRouteName="Diagnostic" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Diagnostic">
+              {({ navigation }: NativeStackScreenProps<RootStackParamList, 'Diagnostic'>) => (
+                <DiagnosticScreen onComplete={() => navigation.replace('Home')} />
+              )}
+            </Stack.Screen>
+            <Stack.Screen name="Home" component={HomeScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      )}
+    </SafeAreaProvider>
   )
 }
 

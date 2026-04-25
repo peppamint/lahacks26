@@ -17,6 +17,16 @@ export const START_LEVEL: ReadingLevel = 'grade5'
 
 // ─── Passage selection ────────────────────────────────────────────────────────
 
+const FALLBACK_PASSAGES: Record<ReadingLevel, string> = {
+  'pre-k': 'Sam has a red hat. Sam pets a cat. The cat is soft. Sam smiles.',
+  grade1: 'Mia rides the bus to work. She sits by the window and reads signs. At her stop, she thanks the driver.',
+  grade3: 'Jordan checks the weather before leaving home. It might rain this afternoon, so Jordan packs a small umbrella in a backpack.',
+  grade5: 'At the community center, volunteers set up tables for a food drive. Neighbors bring canned soup, rice, and pasta, and each donation is sorted by type.',
+  grade8: 'During a busy shift, Elena reviews a checklist before closing the store. She verifies the register totals, restocks low items, and leaves notes for the morning team.',
+  grade10: 'When city buses changed routes, many riders were confused for a week. The transit office posted updated maps online and at each station, which gradually reduced delays.',
+  adult: 'Before signing a lease, Marcus compared monthly rent, utility terms, and maintenance clauses across three apartments. By calculating total annual cost instead of rent alone, he avoided an option with hidden fees.',
+}
+
 // Determines the level of the next passage using a simple binary-search-style
 // adaptive algorithm:
 //   - "too easy"  → step one level UP
@@ -42,7 +52,10 @@ export async function fetchNextPassage(
   }
   // 'just_right' leaves the level unchanged
 
-  const text = await generateReadingPassage(level)
+  const text = await generateReadingPassage(level).catch((error) => {
+    console.error('[fetchNextPassage] Falling back to local passage:', error)
+    return FALLBACK_PASSAGES[level]
+  })
   return { level, text }
 }
 

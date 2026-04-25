@@ -65,7 +65,15 @@ export async function getOrCreateUserId(): Promise<string> {
 
   if (getUserError) {
     const isMissingSession = getUserError.message.toLowerCase().includes('auth session missing')
-    if (!isMissingSession) {
+    const isBooleanCastError = getUserError.message.toLowerCase().includes('cast') &&
+      getUserError.message.toLowerCase().includes('boolean')
+
+    if (isBooleanCastError) {
+      // Recover from a bad cached auth session payload on device.
+      await client.auth.signOut()
+    }
+
+    if (!isMissingSession && !isBooleanCastError) {
       throw new Error(getUserError.message)
     }
   }
@@ -93,8 +101,22 @@ export async function getOrCreateUserId(): Promise<string> {
 }
 
 export async function ensureAuthSession(): Promise<{ userId: string }> {
-  const userId = await getOrCreateUserId()
-  return { userId }
+  try {
+    const userId = await getOrCreateUserId()
+    return { userId }
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : ''
+    const isBooleanCastError = message.includes('cast') && message.includes('boolean')
+    if (!isBooleanCastError) {
+      throw error
+    }
+
+    // Last-resort retry after forcing sign-out if session cache is corrupted.
+    const client = getSupabaseClient()
+    await client.auth.signOut()
+    const userId = await getOrCreateUserId()
+    return { userId }
+  }
 }
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
@@ -107,7 +129,9 @@ export async function upsertProfile(profile: UserProfile): Promise<void> {
     domain: profile.domain,
     reading_level: profile.readingLevel,
   })
-  if (error) throw error
+  if (error) {
+    throw new Error(error.message)
+  }
 }
 
 export const saveProfile = upsertProfile
