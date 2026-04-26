@@ -22,6 +22,24 @@ export const GOAL_TURN_LIMIT = 8
 // To change the difficulty spread, reorder or replace these levels.
 export const BASELINE_LEVELS: ReadingLevel[] = ['pre-k', 'grade1', 'grade3', 'grade5', 'grade8']
 
+// One distinct topic per baseline level — keeps every passage on a different subject.
+const BASELINE_TOPICS: Record<ReadingLevel, string> = {
+  'pre-k':   'a pet animal and what it likes to eat',
+  'grade1':  'a child helping with cooking at home',
+  'grade3':  'how seasons change and affect the outdoors',
+  'grade5':  'a local community event and the people who attended',
+  'grade8':  'how renewable energy sources are changing cities',
+  'grade10': 'the psychological effects of social media on teenagers',
+  'adult':   'economic policy and its impact on small businesses',
+}
+
+// Three distinct angles for domain passages — ensures variety across the same topic area.
+const DOMAIN_ANGLES = [
+  'a practical, everyday situation someone might encounter',
+  'a historical background or origin story related to the topic',
+  'a specific challenge or problem and how it was solved',
+]
+
 // ─── Step 3 Configuration ─────────────────────────────────────────────────────
 
 // Number of domain-specific passages shown after the baseline.
@@ -36,7 +54,7 @@ export async function generateBaselinePassages(): Promise<GeneratedPassage[]> {
   return Promise.all(
     BASELINE_LEVELS.map(async (level) => ({
       level,
-      text: await generateReadingPassage(level),
+      text: await generateReadingPassage(level, BASELINE_TOPICS[level]),
     })),
   )
 }
@@ -75,8 +93,8 @@ export async function generateDomainPassages(
   level: ReadingLevel,
 ): Promise<string[]> {
   return Promise.all(
-    Array.from({ length: DOMAIN_PASSAGE_COUNT }, () =>
-      generateDomainPassage(interests, level),
+    Array.from({ length: DOMAIN_PASSAGE_COUNT }, (_, i) =>
+      generateDomainPassage(interests, level, DOMAIN_ANGLES[i % DOMAIN_ANGLES.length]),
     ),
   )
 }
@@ -89,7 +107,7 @@ export async function generateSpeakingPassage(
   interests: string,
   level: ReadingLevel,
 ): Promise<string> {
-  return generateDomainPassage(interests, level)
+  return generateDomainPassage(interests, level, 'a real-world scenario the learner might encounter')
 }
 
 // ─── Finalization ─────────────────────────────────────────────────────────────

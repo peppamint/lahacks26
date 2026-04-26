@@ -7,6 +7,7 @@ import { MacroLesson } from './modules/macro-lessons/MacroLesson'
 import { DiagnosticScreen } from './modules/diagnostic/DiagnosticScreen'
 import { useStore } from './store'
 import LessonMap from './screens/LessonMap'
+import { LoadingScreen } from './components/LoadingScreen'
 import { ensureLearnerProfile, getCurrentUser, signInAnonymously } from './services/supabase'
 import {
   buildMacroLessonConfig,
@@ -21,11 +22,14 @@ import {
   buildMicroLessonFromSource,
   ensureDemoAdvancedLesson,
   fetchLessonMapItems,
+  fetchLessonQuestionsWithPersonalization,
   type LessonMapItem,
+  type LessonQuestion,
 } from './services/lessons'
 
 const DIAGNOSTIC_KEY = 'diagnostic_complete'
-const SKIP_DIAGNOSTIC = false  // DEV: set true to bypass diagnostic on every boot
+const SKIP_DIAGNOSTIC = true    // DEV: set true to bypass diagnostic on every boot
+const DEV_UNLOCK_LAST_LESSON = true // DEV: set true to jump straight to the last lesson
 
 export default function App() {
   const userId         = useStore((s) => s.userId)
@@ -33,6 +37,7 @@ export default function App() {
   const activeLessonId = useStore((s) => s.activeLessonId)
   const setActiveLessonId = useStore((s) => s.setActiveLessonId)
   const completeLesson = useStore((s) => s.completeLesson)
+  const setLessonProgress = useStore((s) => s.setLessonProgress)
   const readingLevel = useStore((s) => s.readingLevel)
   const interests = useStore((s) => s.profile?.interests ?? 'general literacy')
 
@@ -42,10 +47,26 @@ export default function App() {
   const [lessonMapItems, setLessonMapItems] = useState<LessonMapItem[]>([])
   const [microConfig, setMicroConfig] = useState<ReturnType<typeof buildMicroLessonConfig> | null>(null)
   const [macroConfig, setMacroConfig] = useState<ReturnType<typeof buildMacroLessonConfig> | null>(null)
-  
+  const [microQuestions, setMicroQuestions] = useState<LessonQuestion[] | null>(null)
+
+  // DEV: unlock all lessons so the last one is immediately accessible
+  useEffect(() => {
+    if (!DEV_UNLOCK_LAST_LESSON) return
+    const ids = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15']
+    const devProgress = Object.fromEntries(
+      ids.map((id, i) => [
+        id,
+        i < ids.length - 1
+          ? { status: 'completed' as const, stars: 3 }
+          : { status: 'current' as const, stars: 0 },
+      ])
+    )
+    setLessonProgress(devProgress)
+  }, [])
+
   useEffect(() => {
     async function init() {
-      // await AsyncStorage.removeItem(DIAGNOSTIC_KEY)
+      //await AsyncStorage.removeItem(DIAGNOSTIC_KEY)
       try {
         let user = await getCurrentUser()
         if (!user) user = await signInAnonymously()
@@ -104,12 +125,18 @@ export default function App() {
       if (!activeLessonId || !activeLessonType) {
         setMicroConfig(null)
         setMacroConfig(null)
+        setMicroQuestions(null)
         return
       }
       if (activeLessonType === 'micro') {
         const config = await buildMicroLessonFromSource(activeLessonId, readingLevel, interests)
+        if (cancelled) return
+        const questions = await fetchLessonQuestionsWithPersonalization(
+          config.lessonId, config.readingLevel, config.interests, 'micro'
+        )
         if (!cancelled) {
           setMicroConfig(config)
+          setMicroQuestions(questions)
           setMacroConfig(null)
         }
         return
@@ -118,6 +145,7 @@ export default function App() {
       if (!cancelled) {
         setMacroConfig(config)
         setMicroConfig(null)
+        setMicroQuestions(null)
       }
     }
     resolveConfigs()
@@ -136,7 +164,20 @@ export default function App() {
     }
   }
 
-  if (!authReady || !userId || diagnosticDone === null) return null
+  if (!authReady || !userId || diagnosticDone === null) {
+    return (
+      <View style={styles.root}>
+        <StatusBar style="dark" />
+        <LoadingScreen fullScreen message="Getting things ready…" />
+      </View>
+    )
+  }
+
+  const lessonPending =
+    !!activeLessonId &&
+    ((activeLessonType === 'micro' && (!microConfig || !microQuestions)) ||
+      (activeLessonType === 'macro' && !macroConfig) ||
+      !activeLessonType)
 
   return (
     <View style={styles.root}>
@@ -145,15 +186,20 @@ export default function App() {
       {!diagnosticDone ? (
         // ── DIAGNOSTIC ─────────────────────────────────────────────
         <DiagnosticScreen onComplete={handleDiagnosticComplete} />
-      ) : activeLessonId && activeLessonType === 'micro' && microConfig ? (
+      ) : lessonPending ? (
+        // ── LOADING — stays up until config + questions are both ready ──
+        <LoadingScreen fullScreen message="Preparing your lesson…" />
+      ) : activeLessonId && activeLessonType === 'micro' && microConfig && microQuestions ? (
         // ── LESSON SCREEN ──────────────────────────────────────────
         <MicroLesson
           userId={userId}
           config={microConfig}
+          prefetchedQuestions={microQuestions}
           onComplete={handleLessonComplete}
+          onExit={() => setActiveLessonId(null)}
         />
       ) : activeLessonId && macroConfig ? (
-        <MacroLesson userId={userId} config={macroConfig} onComplete={handleLessonComplete} />
+        <MacroLesson userId={userId} config={macroConfig} onComplete={handleLessonComplete} onExit={() => setActiveLessonId(null)} />
       ) : (
         // ── HOME / MAP SCREEN ───────────────────────────────────────
         <LessonMap lessons={lessonMapItems} />
@@ -163,5 +209,5 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A1628' },
+  root: { flex: 1, backgroundColor: '#F2EFE6' },
 })

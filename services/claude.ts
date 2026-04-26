@@ -125,7 +125,7 @@ export async function defineWord(word: string, context: string): Promise<string>
   })
 }
 
-export async function generateReadingPassage(level: ReadingLevel): Promise<string> {
+export async function generateReadingPassage(level: ReadingLevel, topic: string): Promise<string> {
   const levelLabel = LEVEL_LABELS[level]
   return callProxy({
     model: HAIKU,
@@ -133,7 +133,7 @@ export async function generateReadingPassage(level: ReadingLevel): Promise<strin
     messages: [
       {
         role: 'user',
-        content: `Write a short self-contained reading passage (3–5 sentences) at a "${levelLabel}" reading level about an everyday topic (nature, food, community, weather, or work). No title or heading.`,
+        content: `Write a short self-contained reading passage (3–5 sentences) at a "${levelLabel}" reading level. Topic: ${topic}. No title or heading.`,
       },
     ],
     max_tokens: 256,
@@ -237,14 +237,14 @@ Do not include <PROFILE> before turn 3. Plain language only — no markdown, no 
 // at their detected reading level. Used for domain-specific calibration.
 //
 // To add domain-specific context or templates, extend the domainContext map below.
-export async function generateDomainPassage(interests: string, level: ReadingLevel): Promise<string> {
+export async function generateDomainPassage(interests: string, level: ReadingLevel, angle: string): Promise<string> {
   return callProxy({
     model: HAIKU,
     system: 'You are a reading assessment tool. Output the passage text only — no title, no heading, no label, no quotes, no explanation.',
     messages: [
       {
         role: 'user',
-        content: `Write a realistic 3–5 sentence passage at a "${LEVEL_LABELS[level]}" reading level. Make it relevant to someone with these interests: "${interests}". No title or heading.`,
+        content: `Write a realistic 3–5 sentence passage at a "${LEVEL_LABELS[level]}" reading level. Make it relevant to someone with these interests: "${interests}". Angle: ${angle}. No title or heading.`,
       },
     ],
     max_tokens: 256,

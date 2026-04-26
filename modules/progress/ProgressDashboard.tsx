@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, StyleSheet } from 'react-native'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useProgress } from './hooks/useProgress'
 import { fetchTodayProgress } from '../../services/progress'
 import { useStore } from '../../store'
@@ -147,11 +148,7 @@ export function ProgressDashboard() {
   }
 
   if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2196F3" />
-      </View>
-    )
+    return <LoadingScreen fullScreen message="Loading progress…" />
   }
 
   return (

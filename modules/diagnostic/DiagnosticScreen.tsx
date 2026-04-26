@@ -11,13 +11,13 @@ import {
   Keyboard,
   Platform,
   Animated,
-  ActivityIndicator,
 } from 'react-native'
 import { Image } from 'expo-image'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import type { StyleProp, TextStyle } from 'react-native'
-import { conductGoalTurn, detectStumbleFromTranscript } from '../../services/claude'
+import { conductGoalTurn } from '../../services/claude'
 import { useSpeechRecognition } from '../speech'
 import { useTextToSpeech } from '../speech/hooks/useTextToSpeech'
 import { saveProfile } from '../../services/supabase'
@@ -26,7 +26,6 @@ import {
   DOMAIN_PASSAGE_COUNT,
   generateBaselinePassages,
   generateDomainPassages,
-  generateSpeakingPassage,
   determineLevelFromRatings,
   buildDiagnosticResult,
 } from './DiagnosticFlow'
@@ -113,7 +112,7 @@ function LoadingGif({ size = 80 }: { size?: number }) {
 }
 
 // ─── ProgressHeader ───────────────────────────────────────────────────────────
-const TOTAL_STEPS = 8
+const TOTAL_STEPS = 7
 
 function ProgressHeader({ current }: { current: number }) {
   return (
@@ -151,15 +150,13 @@ const PHASE_LABELS: Partial<Record<DiagnosticPhase, string>> = {
   baseline_reading: 'DIAGNOSTIC · READING',
   domain_loading:   'DIAGNOSTIC · READING',
   domain_reading:   'DIAGNOSTIC · READING',
-  speaking_loading: 'DIAGNOSTIC · SPEECH',
-  speaking:         'DIAGNOSTIC · SPEECH',
   finalizing:       'DIAGNOSTIC · RESULTS',
   result:           'DIAGNOSTIC · RESULTS',
 }
 
 // ─── View modes ───────────────────────────────────────────────────────────────
 // Controls what the center content area shows, independent of phase.
-type ViewMode = 'goal-input' | 'message' | 'reading' | 'speaking' | 'loading'
+type ViewMode = 'goal-input' | 'message' | 'reading' | 'loading'
 
 // ─── Fallback goal profile ────────────────────────────────────────────────────
 const DEFAULT_GOAL_PROFILE: GoalProfile = {
@@ -212,10 +209,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
   const [domainPassages, setDomainPassages]           = useState<string[]>([])
   const [currentDomainIndex, setCurrentDomainIndex]   = useState(0)
 
-  // ── Speaking state ────────────────────────────────────────────────────────
-  const [speakingPassage, setSpeakingPassage] = useState<string | null>(null)
-  const { startRecording, stopRecording, isRecording } = useSpeechRecognition({ offline: false })
-
   // ── Voice text-input state ────────────────────────────────────────────────
   const {
     startRecording: startVoiceInput,
@@ -229,9 +222,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
   // ── TTS ───────────────────────────────────────────────────────────────────
   const { speak: ttSpeak, stop: ttsStop } = useTextToSpeech()
   const [ttsEnabled, setTtsEnabled] = useState(false)
-  const [isTranscribing, setIsTranscribing]   = useState(false)
-  const [recordingSeconds, setRecordingSeconds] = useState(0)
-  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Keyboard animation ────────────────────────────────────────────────────
   // Translates only the input row upward so the skip button stays put and
@@ -325,8 +315,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
       handleBaselineRating('too_easy')
     } else if (phase === 'domain_reading') {
       handleDomainRating('too_easy')
-    } else if (phase === 'speaking') {
-      handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
     }
   }
 
@@ -393,7 +381,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── Step 2: Baseline rating ───────────────────────────────────────────────
   async function handleBaselineRating(rating: PassageRating) {
-    ttsStop()
     const passage = baselinePassages[currentBaselineIndex]
     if (!passage) return
     const result: BaselineRoundResult = { level: passage.level, rating }
@@ -437,7 +424,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
       setViewMode('reading')
     } catch (err) {
       console.error('[Domain] generateDomainPassages error:', err)
-      await advanceToSpeaking(level, profile)
+      await handleFinalize(level, profile, [])
     } finally {
       setLoading(false)
     }
@@ -445,7 +432,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── Step 3: Domain rating ─────────────────────────────────────────────────
   async function handleDomainRating(rating: PassageRating) {
-    ttsStop()
     const msg =
       rating === 'too_easy'   ? "Good — that vocabulary feels familiar to you." :
       rating === 'just_right' ? "Great, that's a solid match for your domain." :
@@ -454,74 +440,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
     const nextIndex = currentDomainIndex + 1
     if (nextIndex >= DOMAIN_PASSAGE_COUNT) {
-      await advanceToSpeaking(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE)
+      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
     } else {
       setCurrentDomainIndex(nextIndex)
       setViewMode('reading')
-    }
-  }
-
-  // ── Speaking transition ───────────────────────────────────────────────────
-  async function advanceToSpeaking(level: ReadingLevel, profile: GoalProfile) {
-    setPhase('speaking_loading')
-    await showReidMessage("One last step, I'll have you read a short passage aloud so I can hear your voice.")
-    setViewMode('loading')
-    setLoading(true)
-    try {
-      const passage = await generateSpeakingPassage(profile.interests, level)
-      setSpeakingPassage(passage)
-      ttsStop()
-      setTtsEnabled(false)
-      setPhase('speaking')
-      setViewMode('speaking')
-    } catch (err) {
-      console.error('[Speaking] generation error:', err)
-      await handleFinalize(level, profile, [])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Step 4: Speaking — tap to start, tap to stop ──────────────────────────
-  async function handleMicPress() {
-    if (isTranscribing) return
-    if (!isRecording) {
-      const started = await startRecording()
-      if (!started) {
-        // Permission denied — skip speaking step
-        await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
-        return
-      }
-      setRecordingSeconds(0)
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingSeconds((s) => s + 1)
-      }, 1000)
-    } else {
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current)
-        recordingTimerRef.current = null
-      }
-      await handleSpeakingStop()
-    }
-  }
-
-  async function handleSpeakingStop() {
-    setIsTranscribing(true)
-    try {
-      const text = await stopRecording()
-      const stumbleResult = await detectStumbleFromTranscript(speakingPassage!, text)
-      const stumbles = stumbleResult.stumbledWords
-      const msg = stumbles.length > 0
-        ? "Great effort! I have everything I need to build your plan."
-        : "Excellent reading — that was really clear!"
-      await showReidMessage(msg)
-      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, stumbles)
-    } catch (err) {
-      console.error('[Speaking] recording/analysis error:', err)
-      await showReidMessage("I had trouble hearing that. Moving on to your results.")
-      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
-    } finally {
-      setIsTranscribing(false)
     }
   }
 
@@ -554,9 +476,8 @@ export function DiagnosticScreen({ onComplete }: Props) {
     viewMode === 'reading' && phase === 'domain_reading'   ? domainPassages[currentDomainIndex] :
     null
 
-  // Auto-speak new Reid messages and passages when TTS is enabled
+  // Auto-speak new Reid messages when TTS is enabled (reading passages excluded)
   useEffect(() => { if (ttsEnabled && !loading) ttSpeak(currentReidMessage) }, [currentReidMessage, ttsEnabled])
-  useEffect(() => { if (ttsEnabled && currentPassageText) ttSpeak(currentPassageText) }, [currentPassageText, ttsEnabled])
 
   const currentStep = (() => {
     switch (phase) {
@@ -565,10 +486,8 @@ export function DiagnosticScreen({ onComplete }: Props) {
       case 'baseline_reading': return 4
       case 'domain_loading':
       case 'domain_reading':   return 5
-      case 'speaking_loading':
-      case 'speaking':         return 6
-      case 'finalizing':       return 7
-      case 'result':           return 8
+      case 'finalizing':       return 6
+      case 'result':           return 7
       default:                 return 1
     }
   })()
@@ -587,46 +506,26 @@ export function DiagnosticScreen({ onComplete }: Props) {
       <View style={s.main}>
         {viewMode === 'loading' ? (
           <LoadingGif size={80} />
-        ) : (viewMode === 'reading' || viewMode === 'speaking') ? (
-          <>
-            {/* Faded scrollable box — reading and speaking diagnostics only */}
-            <View style={s.textBox}>
-              <ScrollView
-                style={s.textScroll}
-                contentContainerStyle={s.textScrollContent}
-                showsVerticalScrollIndicator={false}
-                nestedScrollEnabled
-                keyboardDismissMode="on-drag"
-              >
-                {viewMode === 'reading' && currentPassageText != null && (
-                  <Text style={s.passageText}>{currentPassageText}</Text>
-                )}
-                {viewMode === 'speaking' && speakingPassage != null && (
-                  <Text style={s.passageText}>{speakingPassage}</Text>
-                )}
-              </ScrollView>
-              <View style={s.fadeTop} pointerEvents="none">
-                <LinearGradient colors={['rgba(242,237,227,1)', 'rgba(242,237,227,0)']} style={s.fadeFill} />
-              </View>
-              <View style={s.fadeBottom} pointerEvents="none">
-                <LinearGradient colors={['rgba(242,237,227,0)', 'rgba(242,237,227,1)']} style={s.fadeFill} />
-              </View>
+        ) : viewMode === 'reading' ? (
+          <View style={s.textBox}>
+            <ScrollView
+              style={s.textScroll}
+              contentContainerStyle={s.textScrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              keyboardDismissMode="on-drag"
+            >
+              {currentPassageText != null && (
+                <Text style={s.passageText}>{currentPassageText}</Text>
+              )}
+            </ScrollView>
+            <View style={s.fadeTop} pointerEvents="none">
+              <LinearGradient colors={['rgba(242,237,227,1)', 'rgba(242,237,227,0)']} style={s.fadeFill} />
             </View>
-
-            {/* TTS button — reading only, not speaking */}
-            {viewMode === 'reading' && (
-              <TouchableOpacity
-                style={[s.speakerBtn, ttsEnabled && s.speakerBtnActive]}
-                activeOpacity={0.7}
-                onPress={() => {
-                  if (ttsEnabled) { ttsStop(); setTtsEnabled(false) }
-                  else setTtsEnabled(true)
-                }}
-              >
-                <Ionicons name="megaphone" size={22} color={ttsEnabled ? C.bg : C.green} />
-              </TouchableOpacity>
-            )}
-          </>
+            <View style={s.fadeBottom} pointerEvents="none">
+              <LinearGradient colors={['rgba(242,237,227,0)', 'rgba(242,237,227,1)']} style={s.fadeFill} />
+            </View>
+          </View>
         ) : (
           <>
             {/* Goal chat / message — plain centered text, no box */}
@@ -682,26 +581,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
           </View>
         )}
 
-        {/* Mic button — speaking phase */}
-        {viewMode === 'speaking' && (
-          <View style={s.micArea}>
-            {isRecording && (
-              <Text style={s.recordingTimer}>{recordingSeconds}s</Text>
-            )}
-            {isTranscribing ? (
-              <LoadingGif size={72} />
-            ) : (
-              <TouchableOpacity
-                style={[s.micBtn, isRecording && s.micBtnActive]}
-                activeOpacity={0.8}
-                onPress={handleMicPress}
-              >
-                <Text style={s.micIcon}>🎙</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
         {/* Text input — animates up with keyboard; skip stays put and is covered */}
         {viewMode === 'goal-input' && (
           <Animated.View style={{ transform: [{ translateY: inputTranslateY }] }}>
@@ -723,7 +602,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
                 disabled={isVoiceTranscribing}
               >
                 {isVoiceTranscribing ? (
-                  <ActivityIndicator size="small" color={C.green} />
+                  <LoadingScreen size={28} />
                 ) : (
                   <Animated.View style={{ transform: [{ scale: voicePulseAnim }] }}>
                     <Ionicons
@@ -758,7 +637,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
           )}
 
           {/* Next ▶| — always shown when pending. Skip ▶| — reading and speaking only. */}
-          {phase !== 'result' && (hasPendingNext || phase === 'baseline_reading' || phase === 'domain_reading' || phase === 'speaking') && (
+          {phase !== 'result' && (hasPendingNext || phase === 'baseline_reading' || phase === 'domain_reading') && (
             <TouchableOpacity style={s.nextRow} onPress={handleNext}>
               <Text style={s.nextText}>{hasPendingNext ? 'Next' : 'Skip'}{'  ▶|'}</Text>
             </TouchableOpacity>

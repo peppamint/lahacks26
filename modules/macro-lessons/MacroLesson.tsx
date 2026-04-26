@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native'
 import type { MacroLessonConfig } from '../../types'
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition'
+import { useTextToSpeech } from '../speech/hooks/useTextToSpeech'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import {
   applyIncrementalSkillMasteryForAttempt,
   completeLessonAttempt,
@@ -24,11 +26,13 @@ interface Props {
   config: MacroLessonConfig
   userId: string
   onComplete?: (stumbleCount: number) => void
+  onExit?: () => void
 }
 
-export function MacroLesson({ config, userId, onComplete }: Props) {
+export function MacroLesson({ config, userId, onComplete, onExit }: Props) {
   const { isRecording, transcript, startRecording, stopRecording, analyzeStumbles } =
     useSpeechRecognition({ offline: false })
+  const { isSpeaking, speak, stop: stopSpeaking } = useTextToSpeech()
 
   const [stumbledWords, setStumbledWords] = useState<string[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -101,13 +105,16 @@ export function MacroLesson({ config, userId, onComplete }: Props) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.label}>LESSON TRACK</Text>
+    <View style={styles.root}>
+      <TouchableOpacity style={styles.exitBtn} onPress={onExit}>
+        <Text style={styles.exitText}>← Back</Text>
+      </TouchableOpacity>
+      <ScrollView style={{ flex: 1, backgroundColor: BG }} contentContainerStyle={styles.container}>
       <Text style={styles.title}>{config.title}</Text>
       <Text style={styles.chapterTitle}>{currentChapter.title}</Text>
 
       {isLoadingQuestions ? (
-        <ActivityIndicator size="large" color={DG} style={styles.spinner} />
+        <LoadingScreen message="Loading chapter…" />
       ) : questionModeEnabled ? (
         <View style={styles.stepPill}>
           <Text style={styles.stepText}>
@@ -116,6 +123,14 @@ export function MacroLesson({ config, userId, onComplete }: Props) {
         </View>
       ) : (
         <View style={styles.textBox}>
+          <TouchableOpacity
+            style={styles.listenBtn}
+            onPress={() => (isSpeaking ? stopSpeaking() : speak(currentChapter.content))}
+          >
+            <Text style={styles.listenBtnText}>
+              {isSpeaking ? '⏸ Pause' : '🔊 Listen to chapter'}
+            </Text>
+          </TouchableOpacity>
           <Text style={styles.passage}>{renderHighlightedText()}</Text>
         </View>
       )}
@@ -170,7 +185,7 @@ export function MacroLesson({ config, userId, onComplete }: Props) {
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {!isLoadingQuestions && !questionModeEnabled && isAnalyzing ? (
-        <ActivityIndicator size="large" style={styles.spinner} />
+        <LoadingScreen message="Analyzing your reading…" />
       ) : !isLoadingQuestions && !questionModeEnabled ? (
         <TouchableOpacity
           style={[styles.button, isRecording && styles.buttonRecording]}
@@ -202,50 +217,64 @@ export function MacroLesson({ config, userId, onComplete }: Props) {
           <Text style={styles.finishButtonText}>Back to Lessons</Text>
         </TouchableOpacity>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 24, gap: 20, backgroundColor: BG, minHeight: '100%' },
-  label: { fontSize: 11, fontWeight: '700', letterSpacing: 1.4, color: DG, opacity: 0.45 },
-  title: { fontSize: 24, fontWeight: '900', color: DG },
-  chapterTitle: { fontSize: 15, color: DG, opacity: 0.6, marginTop: -12 },
+  root: { flex: 1, backgroundColor: BG },
+  exitBtn: {
+    paddingTop: 56,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  exitText: { color: DG, fontSize: 16, fontWeight: '700', fontFamily: 'Arial' },
+  container: { padding: 24, gap: 20, backgroundColor: BG, flexGrow: 1, justifyContent: 'center', alignItems: 'stretch' },
+  title: { fontSize: 26, fontWeight: '900', color: DG, fontFamily: 'Arial', textAlign: 'center' },
+  chapterTitle: { fontSize: 16, color: DG, opacity: 0.6, marginTop: -12, fontFamily: 'Arial' },
   stepPill: {
     alignSelf: 'flex-start',
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: BORDER_C,
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
-  stepText: { color: DG, fontSize: 12, fontWeight: '700' },
-  textBox: { backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: BORDER_C },
-  passage: { fontSize: 16, lineHeight: 26, flexWrap: 'wrap', color: DG },
-  word: { color: DG },
-  stumbled: { color: DANGER, fontWeight: '600' },
+  stepText: { color: DG, fontSize: 13, fontWeight: '700', fontFamily: 'Arial' },
+  textBox: { backgroundColor: '#fff', borderRadius: 16, padding: 18, borderWidth: 1, borderColor: BORDER_C, gap: 14 },
+  listenBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: DG,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  listenBtnText: { color: '#fff', fontSize: 14, fontWeight: '700', fontFamily: 'Arial' },
+  passage: { fontSize: 19, lineHeight: 30, flexWrap: 'wrap', color: DG, fontFamily: 'Arial' },
+  word: { color: DG, fontFamily: 'Arial' },
+  stumbled: { color: DANGER, fontWeight: '700', fontFamily: 'Arial' },
   transcriptBox: { backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: BORDER_C },
-  transcriptLabel: { fontWeight: '600', marginBottom: 4, color: DG },
-  transcript: { fontSize: 15, color: DG },
+  transcriptLabel: { fontWeight: '600', marginBottom: 4, color: DG, fontFamily: 'Arial' },
+  transcript: { fontSize: 16, color: DG, fontFamily: 'Arial' },
   button: {
     backgroundColor: DG,
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 18,
     alignItems: 'center',
   },
   buttonRecording: { backgroundColor: DANGER },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  spinner: { marginTop: 16 },
-  error: { color: DANGER },
-  hint: { color: DG, opacity: 0.55, fontSize: 13, textAlign: 'center' },
-  doneBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: BORDER_C },
-  doneText: { color: DG, fontWeight: '700' },
+  buttonText: { color: '#fff', fontSize: 17, fontWeight: '700', fontFamily: 'Arial' },
+  error: { color: DANGER, fontFamily: 'Arial' },
+  hint: { color: DG, opacity: 0.55, fontSize: 14, textAlign: 'center', fontFamily: 'Arial' },
+  doneBox: { backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: BORDER_C },
+  doneText: { color: DG, fontWeight: '700', fontSize: 16, fontFamily: 'Arial' },
   finishButton: {
     backgroundColor: DG,
     borderRadius: 12,
     padding: 14,
     alignItems: 'center',
   },
-  finishButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  finishButtonText: { color: '#fff', fontSize: 16, fontWeight: '700', fontFamily: 'Arial' },
 })

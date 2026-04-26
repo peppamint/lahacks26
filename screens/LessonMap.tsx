@@ -19,6 +19,8 @@ import Svg, {
   Stop,
   Text as SvgText,
 } from 'react-native-svg'
+
+const AnimatedG = Animated.createAnimatedComponent(G)
 import { useStore } from '../store'
 import NewsScreen from './NewsScreen'
 
@@ -71,28 +73,30 @@ const FALLBACK_PROGRESS: Record<string, { status: 'completed' | 'current' | 'loc
 const SCREEN_W = Dimensions.get('window').width
 const SCALE    = SCREEN_W / 375    // scale to any device width
 const MAP_W    = SCREEN_W
-const MAP_H    = 1920
-const NW       = 106 * SCALE       // node width
-const NH       = 70                // node height
-const NR       = 13                // node border radius
+const MAP_H    = 2400
+const NW       = 164 * SCALE       // node width
+const NH       = 112               // node height
+const NR       = 16                // node border radius
 
 // Node centers at 375px baseline — scaled at render time via SCALE
+// x values kept within [98, 277] so node edges stay ≥16px from screen edges
+// (NW/2 at 375px baseline = 82px; 82 + 16 = 98, 375 - 82 - 16 = 277)
 const RAW_POS: Record<string, { x: number; y: number }> = {
-  '1':  { x: 148, y: 100  },
-  '2':  { x: 278, y: 205  },
-  '3':  { x: 190, y: 326  },
-  '4':  { x: 80,  y: 447  },
-  '5':  { x: 188, y: 572  },
-  '6':  { x: 276, y: 697  },
-  '7':  { x: 148, y: 822  },
-  '8':  { x: 68,  y: 947  },
-  '9':  { x: 204, y: 1072 },
-  '10': { x: 188, y: 1200 },
-  '11': { x: 278, y: 1325 },
-  '12': { x: 162, y: 1450 },
-  '13': { x: 68,  y: 1575 },
-  '14': { x: 238, y: 1700 },
-  '15': { x: 188, y: 1825 },
+  '1':  { x: 167, y: 100  },
+  '2':  { x: 277, y: 250  },
+  '3':  { x: 203, y: 400  },
+  '4':  { x: 109, y: 550  },
+  '5':  { x: 201, y: 700  },
+  '6':  { x: 275, y: 850  },
+  '7':  { x: 167, y: 1000 },
+  '8':  { x: 98,  y: 1150 },
+  '9':  { x: 214, y: 1300 },
+  '10': { x: 201, y: 1450 },
+  '11': { x: 277, y: 1600 },
+  '12': { x: 179, y: 1750 },
+  '13': { x: 98,  y: 1900 },
+  '14': { x: 243, y: 2050 },
+  '15': { x: 201, y: 2200 },
 }
 
 const POS = Object.fromEntries(
@@ -125,9 +129,10 @@ interface NodeProps {
   isQuiz: boolean
   status: 'completed' | 'current' | 'locked'
   onSelect: (id: string) => void
+  opacity: Animated.Value
 }
 
-function Node({ id, title, isQuiz, status, onSelect }: NodeProps) {
+function Node({ id, title, isQuiz, status, onSelect, opacity }: NodeProps) {
   const { x, y } = POS[id]
   const done   = status === 'completed'
   const curr   = status === 'current'
@@ -136,10 +141,10 @@ function Node({ id, title, isQuiz, status, onSelect }: NodeProps) {
   const fill      = done || curr ? DG : 'white'
   const textColor = done || curr ? 'white' : '#B0ACA4'
   const lines     = splitTitle(title)
-  const lineH     = 13
+  const lineH     = 17
 
   return (
-    <G onPress={() => !locked && onSelect(id)}>
+    <AnimatedG onPress={() => !locked && onSelect(id)} opacity={opacity}>
 
       {/* Current node accent ring */}
       {curr && (
@@ -165,46 +170,38 @@ function Node({ id, title, isQuiz, status, onSelect }: NodeProps) {
         width={NW}       height={NH}
         rx={NR}
         fill={fill}
-        stroke={locked ? BORDER_C : 'none'}
-        strokeWidth={locked ? 1.5 : 0}
+        stroke={BORDER_C}
+        strokeWidth={1.5}
       />
 
       {/* Quiz node: star + title */}
       {isQuiz ? (
         <>
           <SvgText
-            x={x} y={y - 9}
+            x={x} y={y - 12}
             textAnchor="middle" alignmentBaseline="central"
-            fontSize={18} fill={textColor}
+            fontSize={22} fill={textColor}
           >★</SvgText>
           <SvgText
-            x={x} y={y + 13}
+            x={x} y={y + 16}
             textAnchor="middle" alignmentBaseline="central"
-            fontSize={11} fontFamily="Arial" fill={textColor}
+            fontSize={14} fontFamily="Arial" fill={textColor}
           >{title}</SvgText>
         </>
       ) : (
         <>
-          {/* Lesson number */}
-          <SvgText
-            x={x} y={y - NH / 2 + 16}
-            textAnchor="middle" alignmentBaseline="central"
-            fontSize={11} fontWeight="bold" fontFamily="Arial" fill={textColor}
-          >{id}</SvgText>
-
-          {/* Title — up to 2 lines */}
           {lines.map((line, i) => (
             <SvgText
               key={i}
               x={x}
-              y={y + 4 - ((lines.length - 1) * lineH / 2) + i * lineH}
+              y={y - ((lines.length - 1) * lineH / 2) + i * lineH}
               textAnchor="middle" alignmentBaseline="central"
-              fontSize={11} fontFamily="Arial" fill={textColor}
+              fontSize={14} fontFamily="Arial" fill={textColor}
             >{line}</SvgText>
           ))}
         </>
       )}
-    </G>
+    </AnimatedG>
   )
 }
 
@@ -279,6 +276,20 @@ export default function LessonMap({ lessons }: LessonMapProps) {
   const [selectedId, setSelectedId]   = useState<string | null>(null)
   const [activeTab, setActiveTab]     = useState<'home' | 'news'>('home')
   const [articleOpen, setArticleOpen] = useState(false)
+
+  // Staggered fade-in: one Animated.Value per node, all start at 0
+  const nodeOpacities = useRef(
+    LESSON_META.map(() => new Animated.Value(0))
+  ).current
+
+  useEffect(() => {
+    Animated.stagger(
+      80,
+      nodeOpacities.map(opacity =>
+        Animated.timing(opacity, { toValue: 1, duration: 350, useNativeDriver: true })
+      )
+    ).start()
+  }, [])
   const titleOverrides = new Map((lessons ?? []).map((lesson) => [lesson.id, lesson.title]))
   const lessonMeta = LESSON_META.map((lesson) => ({
     ...lesson,
@@ -319,7 +330,7 @@ export default function LessonMap({ lessons }: LessonMapProps) {
       {/* ── HEADER — hidden on News tab (NewsScreen renders its own) ── */}
       {activeTab !== 'news' && (
         <View style={s.header}>
-          <Text style={s.headerTitle}>GetLit</Text>
+          <Text style={s.headerTitle}>Reid</Text>
           <Text style={s.headerSub}>UNIT 1 — FOUNDATIONS OF READING</Text>
         </View>
       )}
@@ -352,7 +363,7 @@ export default function LessonMap({ lessons }: LessonMapProps) {
               />
 
               {/* Nodes */}
-              {lessonMeta.map(l => (
+              {lessonMeta.map((l, i) => (
                 <Node
                   key={l.id}
                   id={l.id}
@@ -360,6 +371,7 @@ export default function LessonMap({ lessons }: LessonMapProps) {
                   isQuiz={l.isQuiz}
                   status={progress[l.id]?.status ?? 'locked'}
                   onSelect={setSelectedId}
+                  opacity={nodeOpacities[i]}
                 />
               ))}
 
@@ -453,15 +465,15 @@ const s = StyleSheet.create({
 
   // Tab bar
   tabbar: {
-    height: 58,
+    height: 80,
     flexDirection: 'row',
     backgroundColor: BG,
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,51,16,0.07)',
-    paddingBottom: 6,
+    paddingBottom: 24,
   },
   tab:           { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3 },
-  tabIcon:       { fontSize: 18, color: '#B0ACA4' },
+  tabIcon:       { fontSize: 18, color: '#B0ACA4', fontFamily: 'Arial' },
   tabIconActive: { color: DG },
   tabLabel:      { fontSize: 10, color: '#B0ACA4', fontFamily: 'Arial' },
   tabLabelActive:{ color: DG, fontWeight: '700' },
@@ -485,7 +497,7 @@ const s = StyleSheet.create({
   panelLabel:    { fontSize: 11, fontWeight: '700', color: DG, opacity: 0.45, letterSpacing: 1, textTransform: 'uppercase', fontFamily: 'Arial' },
   panelTitle:    { fontSize: 24, fontWeight: '900', color: DG, marginTop: 4, fontFamily: 'Arial' },
   panelStatus:   { fontSize: 13, color: '#999', marginTop: 6, fontFamily: 'Arial' },
-  panelStars:    { fontSize: 20, color: DG, marginTop: 8, letterSpacing: 4 },
+  panelStars:    { fontSize: 20, color: DG, marginTop: 8, letterSpacing: 4, fontFamily: 'Arial' },
   panelBtn: {
     marginTop: 20,
     backgroundColor: DG,
