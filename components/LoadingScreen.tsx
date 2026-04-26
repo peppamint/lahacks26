@@ -1,5 +1,6 @@
 import React from 'react'
-import { Image, StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { Image } from 'expo-image'
 import { APP_THEME } from '../constants/theme'
 
 const DG = APP_THEME.colors.darkGreen
@@ -18,7 +19,7 @@ export function LoadingScreen({ message, fullScreen = false, size = 96 }: Props)
       <Image
         source={require('../assets/loading.gif')}
         style={{ width: size, height: size }}
-        resizeMode="contain"
+        contentFit="contain"
       />
       {message ? <Text style={styles.message}>{message}</Text> : null}
     </View>

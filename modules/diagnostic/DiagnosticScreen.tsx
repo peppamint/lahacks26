@@ -177,10 +177,76 @@ function buildFallbackProfile(messages: { role: string; content: string }[]): Go
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface Props { onComplete: () => void }
 
+// ─── SplashScreen ─────────────────────────────────────────────────────────────
+// Full-screen "tap to start" gate shown before the diagnostic begins.
+function SplashScreen({ onStart }: { onStart: () => void }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,   duration: 900, useNativeDriver: true }),
+      ]),
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [pulseAnim])
+
+  return (
+    <TouchableOpacity style={splash.root} activeOpacity={1} onPress={onStart}>
+      <View style={splash.content}>
+        <ReidIcon size={48} />
+        <Text style={splash.title}>Reid</Text>
+        <Text style={splash.subtitle}>Your personal literacy tutor</Text>
+      </View>
+      <Animated.Text style={[splash.tapHint, { opacity: pulseAnim }]}>
+        Tap to start Reid demo
+      </Animated.Text>
+    </TouchableOpacity>
+  )
+}
+
+const splash = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: C.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 80,
+  },
+  content: {
+    alignItems: 'center',
+    gap: 16,
+  },
+  title: {
+    fontSize: 52,
+    fontWeight: '900',
+    color: C.green,
+    letterSpacing: -1,
+  },
+  subtitle: {
+    fontSize: 17,
+    color: C.muted,
+    fontWeight: '500',
+  },
+  tapHint: {
+    position: 'absolute',
+    bottom: 64,
+    fontSize: 15,
+    color: C.green,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+})
+
 // ─── DiagnosticScreen ─────────────────────────────────────────────────────────
 export function DiagnosticScreen({ onComplete }: Props) {
   const userId          = useStore((s) => s.userId)
   const setReadingLevel = useStore((s) => s.setReadingLevel)
+
+  // ── Splash gate — shown before the diagnostic begins ─────────────────────
+  const [showSplash, setShowSplash] = useState(true)
 
   // ── View / phase ──────────────────────────────────────────────────────────
   const [phase, setPhase]             = useState<DiagnosticPhase>('goal_chat')
@@ -493,6 +559,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
   })()
 
   // ── Render ────────────────────────────────────────────────────────────────
+  if (showSplash) {
+    return <SplashScreen onStart={() => setShowSplash(false)} />
+  }
+
   return (
     <SafeAreaView style={s.safe}>
 
