@@ -27,6 +27,7 @@ async function callProxy(body: {
   messages: Message[]
   system?: string
   max_tokens?: number
+  tools?: unknown[]
 }): Promise<string> {
   const res = await fetch(PROXY_URL, {
     method: 'POST',
@@ -88,7 +89,7 @@ export async function runGoalConversation(messages: Message[]): Promise<string> 
 export async function defineWord(word: string, context: string): Promise<string> {
   return callProxy({
     model: HAIKU,
-    system: 'You are a literacy tutor. Give a short, plain-English definition (1–2 sentences) suitable for an adult learner.',
+    system: 'You are a literacy tutor. Give a short, plain-English definition (1–2 sentences) suitable for an adult learner. Start directly with the definition — do not restate or repeat the word being defined.',
     messages: [
       { role: 'user', content: `Define "${word}" as used in this sentence: "${context}"` },
     ],
@@ -292,4 +293,34 @@ export async function detectStumbleFromTranscript(
     max_tokens: 512,
   })
   return JSON.parse(raw.replace(/```json|```/g, '').trim()) as StumbleResult
+}
+
+// ─── News ─────────────────────────────────────────────────────────────────────
+
+export interface NewsArticle {
+  title: string
+  summary: string
+  author: string
+  publisher: string
+  url: string
+  content: string
+}
+
+export async function rewriteArticleAtLevel(
+  content: string,
+  level: ReadingLevel,
+): Promise<string> {
+  const levelLabel = LEVEL_LABELS[level]
+  const raw = await callProxy({
+    model: SONNET,
+    system: 'You are a literacy tutor. Rewrite the provided article content at the target reading level. Return only the rewritten content as plain text — no markdown, no bold, no italics, no bullet points, no headings, no explanation, no title.',
+    messages: [
+      {
+        role: 'user',
+        content: `Rewrite the following article content at a "${levelLabel}" reading level. Preserve all the key facts and meaning.\n\nCONTENT:\n${content}`,
+      },
+    ],
+    max_tokens: 2048,
+  })
+  return stripMarkdown(raw)
 }

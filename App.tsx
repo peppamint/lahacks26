@@ -9,6 +9,7 @@ import LessonMap from './screens/LessonMap'
 import { getCurrentUser, signInAnonymously } from './services/supabase'
 
 const DIAGNOSTIC_KEY = 'diagnostic_complete'
+const SKIP_DIAGNOSTIC = false  // DEV: set true to bypass diagnostic on every boot
 
 export default function App() {
   const userId         = useStore((s) => s.userId)
@@ -30,7 +31,7 @@ export default function App() {
       }
       try {
         const val = await AsyncStorage.getItem(DIAGNOSTIC_KEY)
-        setDiagnosticDone(val === 'true')
+        setDiagnosticDone(SKIP_DIAGNOSTIC || val === 'true')
       } catch {
         setDiagnosticDone(false)
       }
@@ -38,8 +39,8 @@ export default function App() {
     init()
   }, [setUserId])
 
-  async function handleDiagnosticComplete() {
-    await AsyncStorage.setItem(DIAGNOSTIC_KEY, 'true')
+  function handleDiagnosticComplete() {
+    AsyncStorage.setItem(DIAGNOSTIC_KEY, 'true').catch(() => {})
     setDiagnosticDone(true)
   }
 

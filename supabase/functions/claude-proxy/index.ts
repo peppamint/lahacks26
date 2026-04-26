@@ -15,12 +15,17 @@ serve(async (req: Request) => {
 
   const body = await req.json()
 
+  // web_search_20250305 requires the beta header
+  const usesWebSearch = Array.isArray(body.tools) &&
+    body.tools.some((t: { type?: string }) => t.type === 'web_search_20250305')
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
+      ...(usesWebSearch ? { 'anthropic-beta': 'web-search-2025-03-05' } : {}),
     },
     body: JSON.stringify(body),
   })
