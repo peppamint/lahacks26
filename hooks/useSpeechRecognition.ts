@@ -1,7 +1,11 @@
 import { useState, useRef } from 'react'
 import { Audio } from 'expo-av'
 import type { SpeechConfig, StumbleResult } from '../types'
-import { transcribeAudio } from '../services/whisper'
+import {
+  requestAudioPermissions,
+  startRecording as whisperStartRecording,
+  stopAndTranscribe,
+} from '../services/whisper'
 import { detectStumbleFromTranscript } from '../services/claude'
 import { addToVocabBank } from '../services/vocabBank'
 
@@ -11,16 +15,9 @@ export function useSpeechRecognition(config: SpeechConfig) {
   const recordingRef = useRef<Audio.Recording | null>(null)
 
   async function startRecording() {
-    await Audio.requestPermissionsAsync()
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-    })
-
-    const { recording } = await Audio.Recording.createAsync(
-      Audio.RecordingOptionsPresets.HIGH_QUALITY
-    )
-    recordingRef.current = recording
+    const granted = await requestAudioPermissions()
+    if (!granted) throw new Error('Microphone permission denied')
+    recordingRef.current = await whisperStartRecording()
     setIsRecording(true)
   }
 
@@ -30,14 +27,7 @@ export function useSpeechRecognition(config: SpeechConfig) {
     const recording = recordingRef.current
     if (!recording) throw new Error('No active recording')
 
-    await recording.stopAndUnloadAsync()
-    const uri = recording.getURI()
-    if (!uri) throw new Error('Recording URI is missing')
-
-    const response = await fetch(uri)
-    const blob = await response.blob()
-
-    const result = await transcribeAudio(blob)
+    const result = await stopAndTranscribe(recording)
     setTranscript(result)
     recordingRef.current = null
     return result

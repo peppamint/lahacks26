@@ -43,6 +43,34 @@ async function callProxy(body: {
   return block?.text ?? ''
 }
 
+function parseJsonFromModel<T>(raw: string): T | null {
+  const cleaned = raw.replace(/```json|```/g, '').trim()
+  try {
+    return JSON.parse(cleaned) as T
+  } catch {
+    // Fallback: extract first JSON array/object region.
+    const arrayStart = cleaned.indexOf('[')
+    const arrayEnd = cleaned.lastIndexOf(']')
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      try {
+        return JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1)) as T
+      } catch {
+        // continue
+      }
+    }
+    const objStart = cleaned.indexOf('{')
+    const objEnd = cleaned.lastIndexOf('}')
+    if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
+      try {
+        return JSON.parse(cleaned.slice(objStart, objEnd + 1)) as T
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+}
+
 // ─── Sonnet calls ─────────────────────────────────────────────────────────────
 
 export async function simplifyText(text: string, targetLevel: ReadingLevel): Promise<string> {
@@ -323,4 +351,165 @@ export async function rewriteArticleAtLevel(
     max_tokens: 2048,
   })
   return stripMarkdown(raw)
+}
+
+// ─── Personalized lesson generation ──────────────────────────────────────────
+
+export interface PersonalizedLessonDraft {
+  title: string
+  passages: Array<{
+    title: string
+    content: string
+  }>
+}
+
+export async function generatePersonalizedLessonDraft(args: {
+  lessonId: string
+  lessonType: 'micro' | 'macro'
+  readingLevel: ReadingLevel
+  interests: string
+  focusTopic?: string
+  passageLengthHint?: 'short' | 'long'
+  difficultyHint?: 'standard' | 'advanced'
+}): Promise<PersonalizedLessonDraft | null> {
+  const levelLabel = LEVEL_LABELS[args.readingLevel]
+  const passageHint =
+    args.passageLengthHint === 'long'
+      ? 'Use longer passages: 8-12 sentences each with richer detail.'
+      : 'Use concise passages: 3-5 sentences each.'
+  const difficultyHint =
+    args.difficultyHint === 'advanced'
+      ? 'Increase cognitive complexity: include inference-heavy and multi-step reasoning content.'
+      : 'Keep difficulty aligned to the learner profile.'
+  const raw = await callProxy({
+    model: SONNET,
+    system:
+      'You are an adult literacy lesson planner. Return only valid JSON. No markdown fences, no commentary.',
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Create a personalized ${args.lessonType} lesson draft for learner profile.\n` +
+          `Lesson ID: ${args.lessonId}\n` +
+          `Reading level: ${levelLabel}\n` +
+          `Interests: ${args.interests || 'general daily life'}\n` +
+          `Focus topic: ${args.focusTopic || 'everyday literacy'}\n\n` +
+          `${passageHint}\n` +
+          `${difficultyHint}\n\n` +
+          'Return JSON with shape:\n' +
+          '{"title":"string","passages":[{"title":"string","content":"3-5 sentences"}]}\n' +
+          'For micro: 1 passage. For macro: 2 short passages.',
+      },
+    ],
+    max_tokens: 800,
+  })
+
+  try {
+    const parsed = parseJsonFromModel<PersonalizedLessonDraft>(raw)
+    if (!parsed?.title || !Array.isArray(parsed.passages) || parsed.passages.length === 0) return null
+    return parsed
+  } catch (error) {
+    console.error('[generatePersonalizedLessonDraft] parse error', error)
+    return null
+  }
+}
+
+export interface PersonalizedQuestionDraft {
+  prompt: string
+  choices: string[]
+  correctIndex: number
+  questionTypeId: string
+  interactionMode: 'mcq' | 'text' | 'speech' | 'hybrid'
+}
+
+export async function generatePersonalizedQuestionDraft(args: {
+  lessonId: string
+  lessonType: 'micro' | 'macro'
+  readingLevel: ReadingLevel
+  interests: string
+  focusTopic?: string
+  difficultyHint?: 'standard' | 'advanced'
+}): Promise<PersonalizedQuestionDraft[] | null> {
+  const levelLabel = LEVEL_LABELS[args.readingLevel]
+  const difficultyHint =
+    args.difficultyHint === 'advanced'
+      ? 'Questions should be difficult: inference, distractor quality, and applied reasoning.'
+      : 'Questions should be moderate difficulty and learner-friendly.'
+  const raw = await callProxy({
+    model: SONNET,
+    system:
+      'You are an adult literacy tutor. Return only valid JSON. No markdown. Keep language practical and respectful.',
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Create 3 personalized practice questions for lesson ${args.lessonId}.\n` +
+          `Lesson type: ${args.lessonType}\n` +
+          `Reading level: ${levelLabel}\n` +
+          `Interests: ${args.interests || 'general daily life'}\n` +
+          `Focus topic: ${args.focusTopic || 'everyday literacy'}\n\n` +
+          `${difficultyHint}\n\n` +
+          'Allowed questionTypeId values:\n' +
+          'identify_main_idea, identify_authors_purpose, identify_intended_audience, summarize_text, identify_vocabulary_meaning, identify_intertextual_relationships, identify_figurative_language_meaning\n\n' +
+          'When difficulty is advanced, include at least 2 inference-heavy items and 1 cause/effect or contrast relationship item.\n\n' +
+          'Return JSON array shape:\n' +
+          '[{"prompt":"...","choices":["a","b","c","d"],"correctIndex":0,"questionTypeId":"identify_main_idea","interactionMode":"mcq"}]\n' +
+          'Use interactionMode "mcq" for multiple choice and "text" for summarize_text. Return JSON only.',
+      },
+    ],
+    max_tokens: 1000,
+  })
+
+  try {
+    const parsed = parseJsonFromModel<PersonalizedQuestionDraft[]>(raw)
+    if (!parsed) return null
+    const valid = (parsed ?? []).filter(
+      (item) =>
+        Boolean(item?.prompt) &&
+        Array.isArray(item?.choices) &&
+        item.choices.length === 4 &&
+        typeof item.correctIndex === 'number' &&
+        item.correctIndex >= 0 &&
+        item.correctIndex < 4 &&
+        Boolean(item.questionTypeId),
+    )
+    return valid.length > 0 ? valid : null
+  } catch (error) {
+    console.error('[generatePersonalizedQuestionDraft] parse error', error)
+    return null
+  }
+}
+
+export async function generatePersonalizedLessonTitles(args: {
+  lessonCount: number
+  readingLevel: ReadingLevel
+  interests: string
+}): Promise<string[] | null> {
+  const levelLabel = LEVEL_LABELS[args.readingLevel]
+  const raw = await callProxy({
+    model: HAIKU,
+    system: 'Return only valid JSON. No markdown.',
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Generate ${args.lessonCount} short lesson titles for an adult literacy plan.\n` +
+          `Reading level: ${levelLabel}\n` +
+          `Interests: ${args.interests || 'general daily life'}\n` +
+          'Titles should be practical and specific.\n' +
+          'Return JSON array of strings only.',
+      },
+    ],
+    max_tokens: 400,
+  })
+
+  try {
+    const parsed = parseJsonFromModel<string[]>(raw)
+    if (!parsed) return null
+    const titles = parsed.filter((item) => typeof item === 'string' && item.trim().length > 0)
+    return titles.length > 0 ? titles : null
+  } catch (error) {
+    console.error('[generatePersonalizedLessonTitles] parse error', error)
+    return null
+  }
 }

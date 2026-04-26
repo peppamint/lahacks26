@@ -50,12 +50,12 @@ const LESSON_META = [
 ]
 
 const FALLBACK_PROGRESS: Record<string, { status: 'completed' | 'current' | 'locked'; stars: number }> = {
-  '1':  { status: 'completed', stars: 3 },
-  '2':  { status: 'completed', stars: 2 },
-  '3':  { status: 'completed', stars: 3 },
-  '4':  { status: 'completed', stars: 2 },
-  '5':  { status: 'completed', stars: 1 },
-  '6':  { status: 'current',   stars: 0 },
+  '1':  { status: 'current',   stars: 0 },
+  '2':  { status: 'locked',    stars: 0 },
+  '3':  { status: 'locked',    stars: 0 },
+  '4':  { status: 'locked',    stars: 0 },
+  '5':  { status: 'locked',    stars: 0 },
+  '6':  { status: 'locked',    stars: 0 },
   '7':  { status: 'locked',    stars: 0 },
   '8':  { status: 'locked',    stars: 0 },
   '9':  { status: 'locked',    stars: 0 },
@@ -99,8 +99,8 @@ const POS = Object.fromEntries(
   Object.entries(RAW_POS).map(([id, { x, y }]) => [id, { x: x * SCALE, y }])
 )
 
-function buildPath(): string {
-  return LESSON_META
+function buildPath(lessonMeta: typeof LESSON_META): string {
+  return lessonMeta
     .map((l, i) => `${i === 0 ? 'M' : 'L'} ${POS[l.id].x} ${POS[l.id].y}`)
     .join(' ')
 }
@@ -111,7 +111,11 @@ function splitTitle(title: string): string[] {
   const words = title.split(' ')
   if (words.length === 1) return [title]
   const mid = Math.ceil(words.length / 2)
-  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')]
+  const line1 = words.slice(0, mid).join(' ')
+  const line2 = words.slice(mid).join(' ')
+  const maxChars = 14
+  const clamp = (text: string) => (text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text)
+  return [clamp(line1), clamp(line2)]
 }
 
 // ─── NODE ─────────────────────────────────────────────────────────────────────
@@ -207,14 +211,15 @@ function Node({ id, title, isQuiz, status, onSelect }: NodeProps) {
 // ─── LESSON PANEL ─────────────────────────────────────────────────────────────
 interface PanelProps {
   id: string | null
+  lessonMeta: typeof LESSON_META
   progress: Record<string, { status: 'completed' | 'current' | 'locked'; stars: number }>
   onClose: () => void
   onStart: (id: string) => void
 }
 
-function LessonPanel({ id, progress, onClose, onStart }: PanelProps) {
+function LessonPanel({ id, lessonMeta, progress, onClose, onStart }: PanelProps) {
   const slideY = useRef(new Animated.Value(300)).current
-  const meta   = id ? LESSON_META.find(l => l.id === id) : null
+  const meta   = id ? lessonMeta.find(l => l.id === id) : null
   const prog   = id ? progress[id] : null
 
   useEffect(() => {
@@ -264,12 +269,21 @@ function LessonPanel({ id, progress, onClose, onStart }: PanelProps) {
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
-export default function LessonMap() {
+interface LessonMapProps {
+  lessons?: LessonMapItem[]
+}
+
+export default function LessonMap({ lessons }: LessonMapProps) {
   const scrollRef = useRef<ScrollView>(null)
   const { lessonProgress, setLessonProgress, setActiveLessonId } = useStore()
   const [selectedId, setSelectedId]   = useState<string | null>(null)
   const [activeTab, setActiveTab]     = useState<'home' | 'news'>('home')
   const [articleOpen, setArticleOpen] = useState(false)
+  const titleOverrides = new Map((lessons ?? []).map((lesson) => [lesson.id, lesson.title]))
+  const lessonMeta = LESSON_META.map((lesson) => ({
+    ...lesson,
+    title: titleOverrides.get(lesson.id) ?? lesson.title,
+  }))
 
   // Seed fallback if store is empty
   useEffect(() => {
@@ -279,7 +293,7 @@ export default function LessonMap() {
   }, [])
 
   const progress     = Object.keys(lessonProgress).length > 0 ? lessonProgress : FALLBACK_PROGRESS
-  const currentLesson = LESSON_META.find(l => progress[l.id]?.status === 'current')
+  const currentLesson = lessonMeta.find(l => progress[l.id]?.status === 'current')
 
   // Auto-scroll to current lesson
   useEffect(() => {
@@ -297,7 +311,7 @@ export default function LessonMap() {
     // navigation.navigate('Lesson', { id })
   }
 
-  const pathD = buildPath()
+  const pathD = buildPath(lessonMeta)
 
   return (
     <View style={s.root}>
@@ -305,7 +319,7 @@ export default function LessonMap() {
       {/* ── HEADER — hidden on News tab (NewsScreen renders its own) ── */}
       {activeTab !== 'news' && (
         <View style={s.header}>
-          <Text style={s.headerTitle}>Reid</Text>
+          <Text style={s.headerTitle}>GetLit</Text>
           <Text style={s.headerSub}>UNIT 1 — FOUNDATIONS OF READING</Text>
         </View>
       )}
@@ -338,7 +352,7 @@ export default function LessonMap() {
               />
 
               {/* Nodes */}
-              {LESSON_META.map(l => (
+              {lessonMeta.map(l => (
                 <Node
                   key={l.id}
                   id={l.id}
@@ -392,6 +406,7 @@ export default function LessonMap() {
       {/* ── LESSON PANEL ─────────────────────────────────────────── */}
       <LessonPanel
         id={selectedId}
+        lessonMeta={lessonMeta}
         progress={progress}
         onClose={() => setSelectedId(null)}
         onStart={handleStart}
