@@ -43,6 +43,21 @@ export async function saveProfile(profile: UserProfile): Promise<void> {
   if (error) throw error
 }
 
+/** Minimal row so FKs (e.g. user_lesson_attempts.user_id) succeed before diagnostic finishes. */
+export async function ensureLearnerProfile(userId: string): Promise<void> {
+  if (!userId) return
+  const { error } = await supabase.from('profiles').upsert(
+    {
+      id: userId,
+      goal: '',
+      domain: '',
+      reading_level: 'grade1',
+    },
+    { onConflict: 'id' },
+  )
+  if (error) console.error('[ensureLearnerProfile]', error.message, error)
+}
+
 export async function getProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from('profiles')
