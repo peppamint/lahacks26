@@ -28,8 +28,8 @@ import {
 } from './services/lessons'
 
 const DIAGNOSTIC_KEY = 'diagnostic_complete'
-const SKIP_DIAGNOSTIC = true    // DEV: set true to bypass diagnostic on every boot
-const DEV_UNLOCK_LAST_LESSON = true // DEV: set true to jump straight to the last lesson
+const SKIP_DIAGNOSTIC = false   // DEV: set true to bypass diagnostic on every boot
+const DEV_UNLOCK_LAST_LESSON = false // DEV: set true to jump straight to the last lesson
 
 export default function App() {
   const userId         = useStore((s) => s.userId)
@@ -66,7 +66,7 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
-      //await AsyncStorage.removeItem(DIAGNOSTIC_KEY)
+      await AsyncStorage.removeItem(DIAGNOSTIC_KEY)
       try {
         let user = await getCurrentUser()
         if (!user) user = await signInAnonymously()
