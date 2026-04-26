@@ -1,63 +1,42 @@
-function getTtsProxyUrl() {
-  return process.env['EXPO_PUBLIC_TTS_PROXY_URL'] ?? ''
-}
+import * as FileSystem from 'expo-file-system/legacy'
 
-function getElevenLabsApiKey() {
-  return process.env['EXPO_PUBLIC_ELEVENLABS_API_KEY'] ?? ''
-}
+const ELEVENLABS_API_KEY = process.env['EXPO_PUBLIC_ELEVENLABS_API_KEY'] ?? ''
+const VOICE_ID = 'EXAVITQu4vr4xnSDxMaL' // Arnold (crisp)
+const TTS_URL = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`
 
-function getElevenLabsVoiceId() {
-  return process.env['EXPO_PUBLIC_ELEVENLABS_VOICE_ID'] ?? '21m00Tcm4TlvDq8ikWAM'
-}
-
-function getElevenLabsModelId() {
-  return process.env['EXPO_PUBLIC_ELEVENLABS_MODEL_ID'] ?? 'eleven_multilingual_v2'
-}
-
-// given text (name of the text to speak), returns ArrayBuffer (output audio data)
-export async function synthesizeSpeech(text: string): Promise<ArrayBuffer> {
-  // errors
-  if (!text.trim()) {
-    throw new Error('synthesizeSpeech requires non-empty text')
-  }
-
-  // endpoint URL (address of specific backend function on a server)
-  const ttsProxyUrl = getTtsProxyUrl()
-  const apiKey = getElevenLabsApiKey()
-  const voiceId = getElevenLabsVoiceId()
-  const modelId = getElevenLabsModelId()
-  const useProxy = Boolean(ttsProxyUrl) && !ttsProxyUrl.includes('<your-project>')
-  const url = useProxy
-    ? ttsProxyUrl
-    : `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`
-
-  if (!useProxy && !apiKey) {
-    throw new Error('Missing EXPO_PUBLIC_ELEVENLABS_API_KEY (or set EXPO_PUBLIC_TTS_PROXY_URL)')
-  }
-  
-  // fetch = JS way to make HTTP network requests (fetch = messenger, URL = destination address)
-  const response = await fetch(url, {
+// Returns a local file URI suitable for expo-av playback.
+// offline flag reserved for future Kokoro integration.
+export async function synthesizeSpeech(text: string, _offline: boolean): Promise<string> {
+  if (!ELEVENLABS_API_KEY) throw new Error('EXPO_PUBLIC_ELEVENLABS_API_KEY is not set — restart the Expo dev server')
+  const res = await fetch(TTS_URL, {
     method: 'POST',
     headers: {
-      Accept: 'audio/mpeg',
+      'xi-api-key': ELEVENLABS_API_KEY,
       'Content-Type': 'application/json',
-      ...(useProxy ? {} : { 'xi-api-key': apiKey }),
     },
     body: JSON.stringify({
       text,
-      ...(useProxy ? { voice_id: voiceId } : {}),
-      model_id: modelId,
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-      },
+      model_id: 'eleven_turbo_v2',
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      speed: 0.75,
     }),
   })
 
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(`${useProxy ? 'TTS proxy' : 'ElevenLabs'} error (${response.status}): ${message}`)
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`ElevenLabs error ${res.status}: ${err}`)
   }
 
-  return response.arrayBuffer()
+  const arrayBuffer = await res.arrayBuffer()
+  const base64 = arrayBufferToBase64(arrayBuffer)
+  const uri = FileSystem.cacheDirectory + `tts_${Date.now()}.mp3`
+  await FileSystem.writeAsStringAsync(uri, base64, { encoding: 'base64' })
+  return uri
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
 }

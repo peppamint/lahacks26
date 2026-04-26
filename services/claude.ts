@@ -264,11 +264,11 @@ export async function generateFirstLesson(
   const weakAreaText = weakAreas.length > 0 ? `Weak areas: ${weakAreas.join(', ')}.` : ''
   const raw = await callProxy({
     model: SONNET,
-    system: 'Your name is Reid. You are a literacy coach. Write 1 short, friendly sentence expressing excitement to start learning and suggesting the learner\'s first lesson, mentioning user\'s interest. No markdown, no lists, no bold.',
+    system: 'You are a literacy coach. Write 1 short, friendly sentence expressing excitement to start learning, mentioning user\'s name. No markdown, no lists, no bold.',
     messages: [
       {
         role: 'user',
-        content: `Learner goal: "${goal}". Interests: "${interests}". Reading level: ${LEVEL_LABELS[level]}. ${weakAreaText}.`,
+        content: `Learner goal: "${goal}".`,
       },
     ],
     max_tokens: 128,

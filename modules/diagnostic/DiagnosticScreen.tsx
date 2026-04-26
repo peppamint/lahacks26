@@ -4,18 +4,22 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Pressable,
   SafeAreaView,
   StyleSheet,
   ScrollView,
   Keyboard,
   Platform,
   Animated,
+  ActivityIndicator,
 } from 'react-native'
 import { Image } from 'expo-image'
+import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import type { StyleProp, TextStyle } from 'react-native'
 import { conductGoalTurn, detectStumbleFromTranscript } from '../../services/claude'
-import { startRecording, stopAndTranscribe, requestAudioPermissions } from '../../services/whisper'
+import { useSpeechRecognition } from '../speech'
+import { useTextToSpeech } from '../speech/hooks/useTextToSpeech'
 import { saveProfile } from '../../services/supabase'
 import { useStore } from '../../store'
 import {
@@ -210,8 +214,21 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── Speaking state ────────────────────────────────────────────────────────
   const [speakingPassage, setSpeakingPassage] = useState<string | null>(null)
-  const [activeRecording, setActiveRecording] = useState<any>(null)
-  const [isRecording, setIsRecording]         = useState(false)
+  const { startRecording, stopRecording, isRecording } = useSpeechRecognition({ offline: false })
+
+  // ── Voice text-input state ────────────────────────────────────────────────
+  const {
+    startRecording: startVoiceInput,
+    stopRecording:  stopVoiceInput,
+    isRecording:    isVoiceInputRecording,
+  } = useSpeechRecognition({ offline: false })
+  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false)
+  const voicePulseAnim = useRef(new Animated.Value(1)).current
+  const voicePulseLoop = useRef<Animated.CompositeAnimation | null>(null)
+
+  // ── TTS ───────────────────────────────────────────────────────────────────
+  const { speak: ttSpeak, stop: ttsStop } = useTextToSpeech()
+  const [ttsEnabled, setTtsEnabled] = useState(false)
   const [isTranscribing, setIsTranscribing]   = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -244,6 +261,37 @@ export function DiagnosticScreen({ onComplete }: Props) {
     return () => { showSub.remove(); hideSub.remove() }
   }, [inputTranslateY])
 
+  useEffect(() => {
+    if (isVoiceInputRecording) {
+      voicePulseLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(voicePulseAnim, { toValue: 1.25, duration: 600, useNativeDriver: true }),
+          Animated.timing(voicePulseAnim, { toValue: 1,    duration: 600, useNativeDriver: true }),
+        ]),
+      )
+      voicePulseLoop.current.start()
+    } else {
+      voicePulseLoop.current?.stop()
+      Animated.timing(voicePulseAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start()
+    }
+  }, [isVoiceInputRecording])
+
+  async function handleVoiceInputPress() {
+    if (isVoiceTranscribing) return
+    if (!isVoiceInputRecording) {
+      Keyboard.dismiss()
+      await startVoiceInput()
+    } else {
+      setIsVoiceTranscribing(true)
+      try {
+        const text = await stopVoiceInput()
+        if (text) setInputText(text)
+      } finally {
+        setIsVoiceTranscribing(false)
+      }
+    }
+  }
+
   // ── showReidMessage ───────────────────────────────────────────────────────
   // Displays text as the main content and returns a Promise that resolves
   // when the user presses "Next ▶|".
@@ -262,6 +310,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── handleNext / handleSkip ───────────────────────────────────────────────
   function handleNext() {
+    ttsStop()
     if (pendingNextRef.current) {
       const fn = pendingNextRef.current
       pendingNextRef.current = null
@@ -272,11 +321,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
   }
 
   function handleSkip() {
-    if (phase === 'goal_chat') {
-      const profile = goalProfile ?? DEFAULT_GOAL_PROFILE
-      setGoalProfile(profile)
-      advanceToBaseline(profile)
-    } else if (phase === 'baseline_reading') {
+    if (phase === 'baseline_reading') {
       handleBaselineRating('too_easy')
     } else if (phase === 'domain_reading') {
       handleDomainRating('too_easy')
@@ -348,6 +393,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── Step 2: Baseline rating ───────────────────────────────────────────────
   async function handleBaselineRating(rating: PassageRating) {
+    ttsStop()
     const passage = baselinePassages[currentBaselineIndex]
     if (!passage) return
     const result: BaselineRoundResult = { level: passage.level, rating }
@@ -399,6 +445,7 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
   // ── Step 3: Domain rating ─────────────────────────────────────────────────
   async function handleDomainRating(rating: PassageRating) {
+    ttsStop()
     const msg =
       rating === 'too_easy'   ? "Good — that vocabulary feels familiar to you." :
       rating === 'just_right' ? "Great, that's a solid match for your domain." :
@@ -421,13 +468,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
     setViewMode('loading')
     setLoading(true)
     try {
-      const granted = await requestAudioPermissions()
-      if (!granted) {
-        await handleFinalize(level, profile, [])
-        return
-      }
       const passage = await generateSpeakingPassage(profile.interests, level)
       setSpeakingPassage(passage)
+      ttsStop()
+      setTtsEnabled(false)
       setPhase('speaking')
       setViewMode('speaking')
     } catch (err) {
@@ -442,34 +486,30 @@ export function DiagnosticScreen({ onComplete }: Props) {
   async function handleMicPress() {
     if (isTranscribing) return
     if (!isRecording) {
-      try {
-        const rec = await startRecording()
-        setActiveRecording(rec)
-        setIsRecording(true)
-        setRecordingSeconds(0)
-        recordingTimerRef.current = setInterval(() => {
-          setRecordingSeconds((s) => s + 1)
-        }, 1000)
-      } catch (err) {
-        console.error('[Speaking] startRecording error:', err)
+      const started = await startRecording()
+      if (!started) {
+        // Permission denied — skip speaking step
+        await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
+        return
       }
+      setRecordingSeconds(0)
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((s) => s + 1)
+      }, 1000)
     } else {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current)
         recordingTimerRef.current = null
       }
-      setIsRecording(false)
       await handleSpeakingStop()
     }
   }
 
   async function handleSpeakingStop() {
-    if (!activeRecording) return
     setIsTranscribing(true)
     try {
-      const transcript = await stopAndTranscribe(activeRecording)
-      setActiveRecording(null)
-      const stumbleResult = await detectStumbleFromTranscript(speakingPassage!, transcript)
+      const text = await stopRecording()
+      const stumbleResult = await detectStumbleFromTranscript(speakingPassage!, text)
       const stumbles = stumbleResult.stumbledWords
       const msg = stumbles.length > 0
         ? "Great effort! I have everything I need to build your plan."
@@ -514,6 +554,10 @@ export function DiagnosticScreen({ onComplete }: Props) {
     viewMode === 'reading' && phase === 'domain_reading'   ? domainPassages[currentDomainIndex] :
     null
 
+  // Auto-speak new Reid messages and passages when TTS is enabled
+  useEffect(() => { if (ttsEnabled && !loading) ttSpeak(currentReidMessage) }, [currentReidMessage, ttsEnabled])
+  useEffect(() => { if (ttsEnabled && currentPassageText) ttSpeak(currentPassageText) }, [currentPassageText, ttsEnabled])
+
   const currentStep = (() => {
     switch (phase) {
       case 'goal_chat':        return goalQuestionStep
@@ -551,6 +595,8 @@ export function DiagnosticScreen({ onComplete }: Props) {
                 style={s.textScroll}
                 contentContainerStyle={s.textScrollContent}
                 showsVerticalScrollIndicator={false}
+                nestedScrollEnabled
+                keyboardDismissMode="on-drag"
               >
                 {viewMode === 'reading' && currentPassageText != null && (
                   <Text style={s.passageText}>{currentPassageText}</Text>
@@ -569,14 +615,23 @@ export function DiagnosticScreen({ onComplete }: Props) {
 
             {/* TTS button — reading only, not speaking */}
             {viewMode === 'reading' && (
-              <TouchableOpacity style={s.speakerBtn} activeOpacity={0.7} onPress={() => {}}>
-                <Text style={s.speakerIcon}>🔊</Text>
+              <TouchableOpacity
+                style={[s.speakerBtn, ttsEnabled && s.speakerBtnActive]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (ttsEnabled) { ttsStop(); setTtsEnabled(false) }
+                  else setTtsEnabled(true)
+                }}
+              >
+                <Ionicons name="megaphone" size={22} color={ttsEnabled ? C.bg : C.green} />
               </TouchableOpacity>
             )}
           </>
         ) : (
           <>
             {/* Goal chat / message — plain centered text, no box */}
+            {/* Pressable only here (non-scroll mode) so tapping background dismisses keyboard */}
+            <Pressable onPress={Keyboard.dismiss} style={s.messagePressable}>
             {loading ? (
               <LoadingGif size={60} />
             ) : (
@@ -587,11 +642,21 @@ export function DiagnosticScreen({ onComplete }: Props) {
                 onComplete={() => setIsAnimating(false)}
               />
             )}
+            </Pressable>
 
-            {/* TTS button directly below text */}
-            <TouchableOpacity style={s.speakerBtn} activeOpacity={0.7} onPress={() => {}}>
-              <Text style={s.speakerIcon}>🔊</Text>
-            </TouchableOpacity>
+            {/* TTS button directly below text — hidden while loading */}
+            {!loading && (
+              <TouchableOpacity
+                style={[s.speakerBtn, ttsEnabled && s.speakerBtnActive]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (ttsEnabled) { ttsStop(); setTtsEnabled(false) }
+                  else setTtsEnabled(true)
+                }}
+              >
+                <Ionicons name="megaphone" size={22} color={ttsEnabled ? C.bg : C.green} />
+              </TouchableOpacity>
+            )}
           </>
         )}
       </View>
@@ -640,35 +705,60 @@ export function DiagnosticScreen({ onComplete }: Props) {
         {/* Text input — animates up with keyboard; skip stays put and is covered */}
         {viewMode === 'goal-input' && (
           <Animated.View style={{ transform: [{ translateY: inputTranslateY }] }}>
-            <View style={s.inputRow}>
+            <View style={[s.inputRow, isVoiceInputRecording && s.inputRowRecording]}>
               <TextInput
                 style={s.input}
                 value={inputText}
                 onChangeText={setInputText}
-                placeholder="Type response, or speak it →"
-                placeholderTextColor={C.muted}
+                placeholder={isVoiceInputRecording ? 'Listening...' : 'Type response, or speak it →'}
+                placeholderTextColor={isVoiceInputRecording ? C.green : C.muted}
                 onSubmitEditing={handleGoalSend}
                 returnKeyType="send"
-                editable={!loading}
+                editable={!loading && !isVoiceInputRecording && !isVoiceTranscribing}
               />
-              <TouchableOpacity style={s.inputMicBtn} activeOpacity={0.7} onPress={() => {}}>
-                <Text style={s.inputMicIcon}>🎙</Text>
+              <TouchableOpacity
+                style={s.inputMicBtn}
+                activeOpacity={0.7}
+                onPress={handleVoiceInputPress}
+                disabled={isVoiceTranscribing}
+              >
+                {isVoiceTranscribing ? (
+                  <ActivityIndicator size="small" color={C.green} />
+                ) : (
+                  <Animated.View style={{ transform: [{ scale: voicePulseAnim }] }}>
+                    <Ionicons
+                      name={isVoiceInputRecording ? 'stop-circle' : 'mic'}
+                      size={24}
+                      color={isVoiceInputRecording ? '#E53E3E' : C.green}
+                    />
+                  </Animated.View>
+                )}
               </TouchableOpacity>
+              {!!inputText.trim() && (
+                <TouchableOpacity
+                  style={s.inputSubmitBtn}
+                  activeOpacity={0.8}
+                  onPress={handleGoalSend}
+                  disabled={loading}
+                >
+                  <Ionicons name="arrow-up" size={18} color={C.bg} />
+                </TouchableOpacity>
+              )}
             </View>
           </Animated.View>
         )}
 
         {/* Wrapper measured so keyboard translation lands input just above keyboard */}
         <View onLayout={(e) => { belowInputHeight.current = e.nativeEvent.layout.height }}>
-          {/* Let's get started — result phase after message acknowledged */}
-          {phase === 'result' && !hasPendingNext && (
+          {/* Let's get started — result phase */}
+          {phase === 'result' && (
             <TouchableOpacity style={s.continueBtn} activeOpacity={0.8} onPress={onComplete}>
               <Text style={s.continueBtnText}>Let's get started →</Text>
             </TouchableOpacity>
           )}
 
-          {/* Next ▶| / Skip ▶| — stays in place; covered by keyboard during input */}
-          {(phase !== 'result' || hasPendingNext) && (
+          {/* Next ▶| — always shown when pending. Skip ▶| — reading and speaking only. */}
+          {phase !== 'result' && (hasPendingNext || phase === 'baseline_reading' || phase === 'domain_reading' || phase === 'speaking') && (
             <TouchableOpacity style={s.nextRow} onPress={handleNext}>
               <Text style={s.nextText}>{hasPendingNext ? 'Next' : 'Skip'}{'  ▶|'}</Text>
             </TouchableOpacity>
@@ -702,16 +792,18 @@ const s = StyleSheet.create({
   },
 
   // ── Scrollable text box ──
-  // maxHeight caps the box; ScrollView sizes to content up to that limit.
-  // Do NOT use flex:1 on the ScrollView — it collapses when the parent has no explicit height.
+  // flex:1 on textBox gives it a determined height from main (flex:1 parent),
+  // which allows the inner ScrollView to also use flex:1 and actually scroll.
+  // maxHeight:390 caps it on large screens.
   textBox: {
+    flex: 1,
     maxHeight: 390,
     alignSelf: 'stretch',
     marginHorizontal: 24,
     position: 'relative',
   },
   textScroll: {
-    // no flex — let content drive height, capped by parent maxHeight
+    flex: 1,
   },
   textScrollContent: {
     alignItems: 'center',
@@ -733,6 +825,11 @@ const s = StyleSheet.create({
     height: 40,
   },
   fadeFill: { flex: 1 },
+
+  messagePressable: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+  },
 
   mainText: {
     fontSize: 28,
@@ -762,7 +859,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: C.bg,
   },
-  speakerIcon: { fontSize: 22 },
+  speakerBtnActive: {
+    backgroundColor: C.green,
+  },
 
   // ── Rating buttons ──
   ratingRow: {
@@ -811,9 +910,21 @@ const s = StyleSheet.create({
     gap: 8,
     backgroundColor: C.bg,
   },
+  inputRowRecording: {
+    borderColor: C.green,
+    borderWidth: 2,
+  },
   input: { flex: 1, fontSize: 15, color: C.green },
-  inputMicBtn: { padding: 4 },
+  inputMicBtn: { padding: 8, marginRight: 4 },
   inputMicIcon: { fontSize: 18 },
+  inputSubmitBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: C.green,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // ── Continue (result) ──
   continueBtn: {
