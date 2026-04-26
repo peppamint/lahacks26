@@ -1,7 +1,5 @@
 import type { ReadingLevel } from '../constants/readingLevels'
 import { LEVEL_LABELS, READING_LEVELS } from '../constants/readingLevels'
-import type { Domain } from '../constants/domains'
-import { DOMAIN_LABELS } from '../constants/domains'
 import type { Message, Question, StumbleResult, StumbledWord } from '../types'
 import type { PassageFeedback, GoalProfile } from '../modules/diagnostic/types'
 
@@ -10,6 +8,19 @@ export const HAIKU = 'claude-haiku-4-5-20251001'
 
 // Reads from env — must be a server-side proxy URL; never embed ANTHROPIC_API_KEY in the bundle.
 const PROXY_URL = process.env['EXPO_PUBLIC_CLAUDE_PROXY_URL'] ?? ''
+
+// Strips common markdown from Claude output before displaying to the user.
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')   // **bold**
+    .replace(/\*(.+?)\*/g, '$1')        // *italic*
+    .replace(/__(.+?)__/g, '$1')        // __bold__
+    .replace(/_(.+?)_/g, '$1')          // _italic_
+    .replace(/^#{1,6}\s+/gm, '')        // # headings
+    .replace(/^[-*]\s+/gm, '')          // - bullet points
+    .replace(/`(.+?)`/g, '$1')          // `code`
+    .trim()
+}
 
 async function callProxy(body: {
   model: string
@@ -89,11 +100,11 @@ export async function generateReadingPassage(level: ReadingLevel): Promise<strin
   const levelLabel = LEVEL_LABELS[level]
   return callProxy({
     model: HAIKU,
-    system: 'You are a reading assessment tool. Return only the passage text, no title, no explanation, no quotes.',
+    system: 'You are a reading assessment tool. Output the passage text only — no title, no heading, no label, no quotes, no explanation.',
     messages: [
       {
         role: 'user',
-        content: `Write a short self-contained reading passage (3–5 sentences) at a "${levelLabel}" reading level. The passage should be about an everyday topic (nature, food, community, weather, work) and require no outside context to understand.`,
+        content: `Write a short self-contained reading passage (3–5 sentences) at a "${levelLabel}" reading level about an everyday topic (nature, food, community, weather, or work). No title or heading.`,
       },
     ],
     max_tokens: 256,
@@ -154,22 +165,25 @@ export async function estimateReadingLevel(feedback: PassageFeedback[]): Promise
 export async function conductGoalTurn(
   messages: Message[],
 ): Promise<{ reply: string; profile: GoalProfile | null }> {
+  // Count how many user messages have been sent to determine conversation stage.
+  const userTurnCount = messages.filter((m) => m.role === 'user').length
+
   const raw = await callProxy({
     model: SONNET,
-    system: `Your name is Reid. You are a warm, friendly literacy coach helping an adult learner.
-Ask exactly two questions, one at a time:
-1. What motivates you to improve your reading?
-2. What are your interests or hobbies?
+    system: `Your name is Reid. You are a warm, casual literacy coach helping an adult learner.
 
-Keep each response to 1–2 sentences. Only ask a follow-up if their answer is genuinely unclear or too brief (e.g. just "yes" or "idk"). Do not try to categorize or box in their answers.
+The conversation has three user turns:
+- Turn 1: The user tells you their name. Greet them and ask what motivates them to improve their reading.
+- Turn 2: The user answers the motivation question. Ask what their interests or hobbies are.
+- Turn 3: The user answers the interests question. Give a one-sentence warm acknowledgment AND append the <PROFILE> block below. Do NOT ask any more questions.
 
-Once you have both their motivation and interests, append EXACTLY this at the end of your message (the user will not see it):
-<PROFILE>{"motivation":"...","interests":"...","domain":"legal|work|parenting|news|social"}</PROFILE>
+After turn 3 you MUST include this block at the very end of your reply (the user will not see it):
+<PROFILE>{"motivation":"...","interests":"..."}</PROFILE>
 
-For "domain", silently infer the closest fit from their interests — do NOT ask the user about it.
-Do not include <PROFILE> until you have both answers.`,
+Copy "motivation" and "interests" verbatim from what the user said — do not paraphrase or categorize.
+Do not include <PROFILE> before turn 3. Plain language only — no markdown, no lists, no bold. 1 sentence max per reply.`,
     messages,
-    max_tokens: 512,
+    max_tokens: 256,
   })
 
   // Extract the hidden <PROFILE> block if present.
@@ -183,8 +197,8 @@ Do not include <PROFILE> until you have both answers.`,
     }
   }
 
-  // Strip the tag from the displayed message.
-  const reply = raw.replace(/<PROFILE>[\s\S]*?<\/PROFILE>/, '').trim()
+  // Strip the tag and any markdown from the displayed message.
+  const reply = stripMarkdown(raw.replace(/<PROFILE>[\s\S]*?<\/PROFILE>/, ''))
   return { reply, profile }
 }
 
@@ -194,21 +208,14 @@ Do not include <PROFILE> until you have both answers.`,
 // at their detected reading level. Used for domain-specific calibration.
 //
 // To add domain-specific context or templates, extend the domainContext map below.
-export async function generateDomainPassage(domain: Domain, level: ReadingLevel): Promise<string> {
-  const domainContext: Record<Domain, string> = {
-    legal:     'a lease clause, a court notice, or a government form',
-    work:      'a workplace memo, a job description, or an HR policy',
-    parenting: 'a school newsletter, a pediatric health tip, or a bedtime story excerpt',
-    news:      'a short news article, a weather report, or a community announcement',
-    social:    'a text message thread, a social media post, or an everyday conversation',
-  }
+export async function generateDomainPassage(interests: string, level: ReadingLevel): Promise<string> {
   return callProxy({
     model: HAIKU,
-    system: 'You are a reading assessment tool. Return only the passage text, no title, no explanation.',
+    system: 'You are a reading assessment tool. Output the passage text only — no title, no heading, no label, no quotes, no explanation.',
     messages: [
       {
         role: 'user',
-        content: `Write a realistic ${domainContext[domain]} (3–5 sentences) at a "${LEVEL_LABELS[level]}" reading level. It should feel authentic to the ${DOMAIN_LABELS[domain]} domain.`,
+        content: `Write a realistic 3–5 sentence passage at a "${LEVEL_LABELS[level]}" reading level. Make it relevant to someone with these interests: "${interests}". No title or heading.`,
       },
     ],
     max_tokens: 256,
@@ -250,22 +257,23 @@ export async function analyzeWeakAreas(stumbles: StumbledWord[]): Promise<string
 // Uses Sonnet for richer, more personalized output.
 export async function generateFirstLesson(
   goal: string,
-  domain: Domain,
+  interests: string,
   level: ReadingLevel,
   weakAreas: string[],
 ): Promise<string> {
   const weakAreaText = weakAreas.length > 0 ? `Weak areas: ${weakAreas.join(', ')}.` : ''
-  return callProxy({
+  const raw = await callProxy({
     model: SONNET,
-    system: 'Your name is Reid. You are a literacy coach. In exactly 2 sentences, suggest the learner\'s first lesson. Be specific, encouraging, and practical.',
+    system: 'Your name is Reid. You are a literacy coach. Write 1 short, friendly sentence expressing excitement to start learning and suggesting the learner\'s first lesson, mentioning user\'s interest. No markdown, no lists, no bold.',
     messages: [
       {
         role: 'user',
-        content: `Learner goal: "${goal}". Domain: ${DOMAIN_LABELS[domain]}. Reading level: ${LEVEL_LABELS[level]}. ${weakAreaText} What should their first lesson be?`,
+        content: `Learner goal: "${goal}". Interests: "${interests}". Reading level: ${LEVEL_LABELS[level]}. ${weakAreaText}.`,
       },
     ],
     max_tokens: 128,
   })
+  return stripMarkdown(raw)
 }
 
 export async function detectStumbleFromTranscript(

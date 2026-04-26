@@ -7,7 +7,6 @@ import {
 } from '../../services/claude'
 import type { DiagnosticResult, StumbledWord } from '../../types'
 import type { ReadingLevel } from '../../constants/readingLevels'
-import type { Domain } from '../../constants/domains'
 import type { GoalProfile, GeneratedPassage, BaselineRoundResult } from './types'
 
 // ─── Step 1 Configuration ─────────────────────────────────────────────────────
@@ -72,12 +71,12 @@ export function determineLevelFromRatings(ratings: BaselineRoundResult[]): Readi
 // Generates DOMAIN_PASSAGE_COUNT real-world snippets from the learner's domain
 // at their detected reading level. Called once when domain_loading begins.
 export async function generateDomainPassages(
-  domain: Domain,
+  interests: string,
   level: ReadingLevel,
 ): Promise<string[]> {
   return Promise.all(
     Array.from({ length: DOMAIN_PASSAGE_COUNT }, () =>
-      generateDomainPassage(domain, level),
+      generateDomainPassage(interests, level),
     ),
   )
 }
@@ -85,12 +84,12 @@ export async function generateDomainPassages(
 // ─── Step 4 — Speaking passage generation ────────────────────────────────────
 
 // Generates the single passage used for the oral reading assessment.
-// Re-uses generateDomainPassage so it matches the learner's domain and level.
+// Re-uses generateDomainPassage so it matches the learner's interests and level.
 export async function generateSpeakingPassage(
-  domain: Domain,
+  interests: string,
   level: ReadingLevel,
 ): Promise<string> {
-  return generateDomainPassage(domain, level)
+  return generateDomainPassage(interests, level)
 }
 
 // ─── Finalization ─────────────────────────────────────────────────────────────
@@ -105,7 +104,7 @@ export async function buildDiagnosticResult(
 ): Promise<DiagnosticResult> {
   const [weakAreas, firstLessonSuggestion] = await Promise.all([
     analyzeWeakAreas(allStumbles),
-    generateFirstLesson(goalProfile.motivation, goalProfile.domain, baselineLevel, []),
+    generateFirstLesson(goalProfile.motivation, goalProfile.interests, baselineLevel, []),
   ])
 
   // Learners at grade3 and below get short micro-lessons (5–10 min);
@@ -118,7 +117,7 @@ export async function buildDiagnosticResult(
 
   return {
     readingLevel: baselineLevel,
-    domain: goalProfile.domain,
+    interests: goalProfile.interests,
     weakAreas,
     recommendedLessonType,
     firstLessonSuggestion,

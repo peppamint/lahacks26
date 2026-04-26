@@ -1,6 +1,5 @@
 export type { UserProfile, DiagnosticResult, StumbledWord, StumbleResult } from '../../types'
 export type { ReadingLevel } from '../../constants/readingLevels'
-export type { Domain } from '../../constants/domains'
 
 // ─── Conversation phase ───────────────────────────────────────────────────────
 // Controls which UI is active in DiagnosticScreen at any moment.
@@ -31,7 +30,6 @@ export type DiagnosticPhase =
 export interface GoalProfile {
   motivation: string  // free-form: why they want to improve reading
   interests: string   // free-form: hobbies, topics, life context
-  domain: import('../../constants/domains').Domain  // inferred silently for passage generation
 }
 
 // ─── Passage ──────────────────────────────────────────────────────────────────

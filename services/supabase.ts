@@ -37,7 +37,7 @@ export async function saveProfile(profile: UserProfile): Promise<void> {
   const { error } = await supabase.from('profiles').upsert({
     id: profile.userId,
     goal: profile.goal,
-    domain: profile.domain,
+    domain: profile.interests,   // 'domain' is the existing DB column; stores free-form interests text
     reading_level: profile.readingLevel,
   })
   if (error) throw error
@@ -53,7 +53,7 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
   return {
     userId: data.id,
     goal: data.goal,
-    domain: data.domain,
+    interests: data.domain,      // map DB column back to interests
     readingLevel: data.reading_level,
   }
 }

@@ -1,12 +1,11 @@
 export type { ReadingLevel } from '../constants/readingLevels'
-export type { Domain } from '../constants/domains'
 
 // ─── User / Profile ───────────────────────────────────────────────────────────
 
 export interface UserProfile {
   userId: string
   goal: string
-  domain: import('../constants/domains').Domain
+  interests: string
   readingLevel: import('../constants/readingLevels').ReadingLevel
 }
 
@@ -14,7 +13,7 @@ export interface UserProfile {
 
 export interface DiagnosticResult {
   readingLevel: import('../constants/readingLevels').ReadingLevel
-  domain: import('../constants/domains').Domain
+  interests: string
   // Patterns identified from stumbled words across all reading phases,
   // e.g. ['multi-syllable words', 'punctuation pausing']
   weakAreas: string[]
@@ -66,7 +65,7 @@ export interface MicroLessonConfig {
   lessonId: string
   documentText: string
   readingLevel: import('../constants/readingLevels').ReadingLevel
-  domain: import('../constants/domains').Domain
+  interests: string
 }
 
 export interface MacroLessonConfig {

@@ -4,24 +4,21 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Pressable,
-  ScrollView,
+  SafeAreaView,
   StyleSheet,
-  ActivityIndicator,
-  KeyboardAvoidingView,
+  ScrollView,
+  Keyboard,
   Platform,
   Animated,
 } from 'react-native'
+import { Image } from 'expo-image'
+import { LinearGradient } from 'expo-linear-gradient'
 import type { StyleProp, TextStyle } from 'react-native'
 import { conductGoalTurn, detectStumbleFromTranscript } from '../../services/claude'
 import { startRecording, stopAndTranscribe, requestAudioPermissions } from '../../services/whisper'
 import { saveProfile } from '../../services/supabase'
 import { useStore } from '../../store'
-import { LEVEL_LABELS } from '../../constants/readingLevels'
-import { DOMAIN_LABELS } from '../../constants/domains'
 import {
-  GOAL_TURN_LIMIT,
-  BASELINE_LEVELS,
   DOMAIN_PASSAGE_COUNT,
   generateBaselinePassages,
   generateDomainPassages,
@@ -35,58 +32,43 @@ import type {
   GeneratedPassage,
   BaselineRoundResult,
   PassageRating,
-  ChatMessage,
 } from './types'
 import type { ReadingLevel } from '../../constants/readingLevels'
 import type { StumbledWord } from '../../types'
-import type { Audio } from 'expo-av'
 
-// ─── AnimatedBubble ───────────────────────────────────────────────────────────
-// Slides in from below and fades in when first mounted.
-function AnimatedBubble({ children }: { children: React.ReactNode }) {
-  const translateY = useRef(new Animated.Value(18)).current
-  const opacity = useRef(new Animated.Value(0)).current
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(translateY, { toValue: 0, duration: 280, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: 280, useNativeDriver: true }),
-    ]).start()
-  }, [])
-
-  return (
-    <Animated.View style={{ transform: [{ translateY }], opacity }}>
-      {children}
-    </Animated.View>
-  )
-}
-
-// ─── Typewriter config ────────────────────────────────────────────────────────
-const TYPEWRITER_INTERVAL = 150 // ms per word
-
-// Returns how long a full typewriter animation takes plus an optional trailing pause.
-function typewriterDelay(text: string, trailingMs = 350): number {
-  return text.split(' ').length * TYPEWRITER_INTERVAL + trailingMs
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const C = {
+  bg:     '#F2EDE3',
+  green:  '#1B3028',
+  border: '#C8BDA8',
+  muted:  '#6B7280',
 }
 
 // ─── TypewriterText ───────────────────────────────────────────────────────────
-// Renders the full text immediately (so the bubble is correctly sized from the
-// start), then fades each word in one at a time using staggered opacity animations.
-// Words that haven't appeared yet are invisible but still occupy layout space.
-function TypewriterText({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
+// Renders all words immediately (preserving layout), then fades each in one-by-one.
+// Use a changing `key` prop to reset the animation when the message changes.
+function TypewriterText({
+  text,
+  style,
+  onComplete,
+}: {
+  text: string
+  style?: StyleProp<TextStyle>
+  onComplete?: () => void
+}) {
   const words = text.split(' ')
-  // Initialise one Animated.Value per word — stable across re-renders.
   const opacities = useRef(words.map(() => new Animated.Value(0))).current
 
-  useEffect(() => {
+  React.useEffect(() => {
+    opacities.forEach((o) => o.setValue(0))
     Animated.parallel(
       opacities.map((opacity, i) =>
         Animated.sequence([
-          Animated.delay(i * TYPEWRITER_INTERVAL),
-          Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: false }),
+          Animated.delay(i * 150),
+          Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: false }),
         ]),
       ),
-    ).start()
+    ).start(({ finished }) => { if (finished) onComplete?.() })
   }, [])
 
   return (
@@ -100,143 +82,283 @@ function TypewriterText({ text, style }: { text: string; style?: StyleProp<TextS
   )
 }
 
-// ─── Props ────────────────────────────────────────────────────────────────────
-interface Props {
-  onComplete: () => void
+// ─── ReidIcon ─────────────────────────────────────────────────────────────────
+// Two-bar mark from reid_icon.svg: one angled bar, one straight bar.
+function ReidIcon({ size = 28 }: { size?: number }) {
+  const barW = size * 0.85
+  const barH = size * 0.22
+  const barRadius = size * 0.04
+  return (
+    <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'flex-start', gap: size * 0.14 }}>
+      <View style={{ width: barW, height: barH, backgroundColor: '#003310', borderRadius: barRadius, transform: [{ rotate: '-12deg' }] }} />
+      <View style={{ width: barW, height: barH, backgroundColor: '#003310', borderRadius: barRadius }} />
+    </View>
+  )
 }
 
-// ─── Fallback goal profile ─────────────────────────────────────────────────────
-// Used if the user skips the goal chat or Claude fails to extract a profile.
+// ─── LoadingGif ───────────────────────────────────────────────────────────────
+function LoadingGif({ size = 80 }: { size?: number }) {
+  return (
+    <Image
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      source={require('../../assets/loading.gif')}
+      style={{ width: size, height: size }}
+      contentFit="contain"
+    />
+  )
+}
+
+// ─── ProgressHeader ───────────────────────────────────────────────────────────
+const TOTAL_STEPS = 8
+
+function ProgressHeader({ current }: { current: number }) {
+  return (
+    <View style={hdr.row}>
+      <View style={hdr.side}>
+        <ReidIcon size={28} />
+      </View>
+      <View style={hdr.center}>
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => (
+          <View key={i} style={[hdr.dot, i < current ? hdr.filled : hdr.empty]} />
+        ))}
+      </View>
+      <View style={[hdr.side, { alignItems: 'flex-end' }]}>
+        <Text style={hdr.counter}>{current} / {TOTAL_STEPS}</Text>
+      </View>
+    </View>
+  )
+}
+
+const hdr = StyleSheet.create({
+  row:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 },
+  side:    { flex: 1 },
+  center:  { flex: 2, flexDirection: 'row', justifyContent: 'center', gap: 5 },
+  dot:     { width: 7, height: 7, borderRadius: 4 },
+  filled:  { backgroundColor: '#1B3028' },
+  empty:   { backgroundColor: '#C8BDA8' },
+  logo:    { fontSize: 22, color: '#1B3028', fontWeight: '800' },
+  counter: { fontSize: 13, color: '#6B7280' },
+})
+
+// ─── Phase labels ─────────────────────────────────────────────────────────────
+const PHASE_LABELS: Partial<Record<DiagnosticPhase, string>> = {
+  goal_chat:        'DIAGNOSTIC · GOAL',
+  baseline_loading: 'DIAGNOSTIC · READING',
+  baseline_reading: 'DIAGNOSTIC · READING',
+  domain_loading:   'DIAGNOSTIC · READING',
+  domain_reading:   'DIAGNOSTIC · READING',
+  speaking_loading: 'DIAGNOSTIC · SPEECH',
+  speaking:         'DIAGNOSTIC · SPEECH',
+  finalizing:       'DIAGNOSTIC · RESULTS',
+  result:           'DIAGNOSTIC · RESULTS',
+}
+
+// ─── View modes ───────────────────────────────────────────────────────────────
+// Controls what the center content area shows, independent of phase.
+type ViewMode = 'goal-input' | 'message' | 'reading' | 'speaking' | 'loading'
+
+// ─── Fallback goal profile ────────────────────────────────────────────────────
 const DEFAULT_GOAL_PROFILE: GoalProfile = {
   motivation: 'improve my reading',
-  interests: 'general topics',
-  domain: 'social',
+  interests:  'general topics',
 }
 
+// Builds a GoalProfile from raw conversation history when Claude omits <PROFILE>.
+// User turns: [0]=name, [1]=motivation, [2]=interests.
+function buildFallbackProfile(messages: { role: string; content: string }[]): GoalProfile {
+  const userMsgs = messages.filter((m) => m.role === 'user').map((m) => m.content)
+  return {
+    motivation: userMsgs[1] ?? DEFAULT_GOAL_PROFILE.motivation,
+    interests:  userMsgs[2] ?? DEFAULT_GOAL_PROFILE.interests,
+  }
+}
+
+// ─── Props ────────────────────────────────────────────────────────────────────
+interface Props { onComplete: () => void }
+
+// ─── DiagnosticScreen ─────────────────────────────────────────────────────────
 export function DiagnosticScreen({ onComplete }: Props) {
-  // Pull store values as individual selectors to avoid infinite re-render loops.
-  const userId = useStore((s) => s.userId)
+  const userId          = useStore((s) => s.userId)
   const setReadingLevel = useStore((s) => s.setReadingLevel)
-  const setProfile = useStore((s) => s.setProfile)
 
-  // ─── Phase & chat state ──────────────────────────────────────────────────
-  const [phase, setPhase] = useState<DiagnosticPhase>('goal_chat')
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'reid', text: "Hello! My name is Reid! What should I call you?" },
-  ])
-  // conversationHistory is the raw Message[] sent to Claude (role: user/assistant).
-  // Separate from `messages` which is the displayed chat bubbles.
-  const [conversationHistory, setConversationHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
-  const [inputText, setInputText] = useState('')
-  const [loading, setLoading] = useState(false)
+  // ── View / phase ──────────────────────────────────────────────────────────
+  const [phase, setPhase]             = useState<DiagnosticPhase>('goal_chat')
+  const [viewMode, setViewMode]       = useState<ViewMode>('goal-input')
+  const [currentReidMessage, setMsg]  = useState("Hello! My name is Reid! What should I call you?")
+  const [isAnimating, setIsAnimating] = useState(true)
+  const [loading, setLoading]         = useState(false)
+  const [goalQuestionStep, setGoalQuestionStep] = useState(1)
 
-  // ─── Step 1 state ────────────────────────────────────────────────────────
-  const [goalTurnCount, setGoalTurnCount] = useState(0)
+  // pendingNext: resolved when user presses "Next ▶|"
+  const pendingNextRef = useRef<(() => void) | null>(null)
+  const [hasPendingNext, setHasPendingNext] = useState(false)
+
+  // ── Goal state ────────────────────────────────────────────────────────────
+  const convHistoryRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([])
+  const [inputText, setInputText]     = useState('')
   const [goalProfile, setGoalProfile] = useState<GoalProfile | null>(null)
 
-  // ─── Step 2 state ────────────────────────────────────────────────────────
-  const [baselinePassages, setBaselinePassages] = useState<GeneratedPassage[]>([])
+  // ── Baseline state ────────────────────────────────────────────────────────
+  const [baselinePassages, setBaselinePassages]         = useState<GeneratedPassage[]>([])
   const [currentBaselineIndex, setCurrentBaselineIndex] = useState(0)
-  const [baselineRatings, setBaselineRatings] = useState<BaselineRoundResult[]>([])
-  const [lockedLevel, setLockedLevel] = useState<ReadingLevel | null>(null)
+  const [baselineRatings, setBaselineRatings]           = useState<BaselineRoundResult[]>([])
+  const [lockedLevel, setLockedLevel]                   = useState<ReadingLevel | null>(null)
 
-  // ─── Step 3 state ────────────────────────────────────────────────────────
-  const [domainPassages, setDomainPassages] = useState<string[]>([])
-  const [currentDomainIndex, setCurrentDomainIndex] = useState(0)
+  // ── Domain state ──────────────────────────────────────────────────────────
+  const [domainPassages, setDomainPassages]           = useState<string[]>([])
+  const [currentDomainIndex, setCurrentDomainIndex]   = useState(0)
 
-  // ─── Step 4 state ────────────────────────────────────────────────────────
+  // ── Speaking state ────────────────────────────────────────────────────────
   const [speakingPassage, setSpeakingPassage] = useState<string | null>(null)
-  const [allStumbles, setAllStumbles] = useState<StumbledWord[]>([])
-  const [activeRecording, setActiveRecording] = useState<ReturnType<typeof startRecording> extends Promise<infer T> ? T : never | null>(null as any)
-  const [isRecording, setIsRecording] = useState(false)
-  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [activeRecording, setActiveRecording] = useState<any>(null)
+  const [isRecording, setIsRecording]         = useState(false)
+  const [isTranscribing, setIsTranscribing]   = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const scrollRef = useRef<ScrollView>(null)
+  // ── Keyboard animation ────────────────────────────────────────────────────
+  // Translates only the input row upward so the skip button stays put and
+  // gets covered by the keyboard instead of being pushed up.
+  // We subtract the height of the content below the input (skip button area)
+  // so the input lands just above the keyboard rather than overshooting.
+  const inputTranslateY = useRef(new Animated.Value(0)).current
+  const belowInputHeight = useRef(0)
 
   useEffect(() => {
-    scrollRef.current?.scrollToEnd({ animated: true })
-  }, [messages, phase])
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide'
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      Animated.timing(inputTranslateY, {
+        toValue: -(e.endCoordinates.height - belowInputHeight.current - 30),
+        duration: e.duration ?? 250,
+        useNativeDriver: true,
+      }).start()
+    })
+    const hideSub = Keyboard.addListener(hideEvt, (e) => {
+      Animated.timing(inputTranslateY, {
+        toValue: 0,
+        duration: e.duration ?? 250,
+        useNativeDriver: true,
+      }).start()
+    })
+    return () => { showSub.remove(); hideSub.remove() }
+  }, [inputTranslateY])
 
-  function addMessage(msg: ChatMessage) {
-    setMessages((prev) => [...prev, msg])
+  // ── showReidMessage ───────────────────────────────────────────────────────
+  // Displays text as the main content and returns a Promise that resolves
+  // when the user presses "Next ▶|".
+  function showReidMessage(text: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setMsg(text)
+      setIsAnimating(true)
+      setViewMode('message')
+      setHasPendingNext(true)
+      pendingNextRef.current = () => {
+        setHasPendingNext(false)
+        resolve()
+      }
+    })
   }
 
-  // ─── Step 1: Goal conversation ───────────────────────────────────────────
-  // Each send goes to Claude Sonnet. When Claude embeds <PROFILE>, we
-  // auto-advance to baseline. The skip button appears after GOAL_TURN_LIMIT turns.
+  // ── handleNext / handleSkip ───────────────────────────────────────────────
+  function handleNext() {
+    if (pendingNextRef.current) {
+      const fn = pendingNextRef.current
+      pendingNextRef.current = null
+      fn()
+    } else {
+      handleSkip()
+    }
+  }
+
+  function handleSkip() {
+    if (phase === 'goal_chat') {
+      const profile = goalProfile ?? DEFAULT_GOAL_PROFILE
+      setGoalProfile(profile)
+      advanceToBaseline(profile)
+    } else if (phase === 'baseline_reading') {
+      handleBaselineRating('too_easy')
+    } else if (phase === 'domain_reading') {
+      handleDomainRating('too_easy')
+    } else if (phase === 'speaking') {
+      handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
+    }
+  }
+
+  // ── Step 1: Goal conversation ─────────────────────────────────────────────
   async function handleGoalSend() {
     const text = inputText.trim()
     if (!text || loading) return
     setInputText('')
-    addMessage({ role: 'user', text })
+    setGoalQuestionStep((s) => Math.min(s + 1, 3))
 
-    const nextHistory = [...conversationHistory, { role: 'user' as const, content: text }]
-    setConversationHistory(nextHistory)
-    setGoalTurnCount((n) => n + 1)
+    const nextHistory = [...convHistoryRef.current, { role: 'user' as const, content: text }]
+    convHistoryRef.current = nextHistory
+
+    const userTurnCount = nextHistory.filter((m) => m.role === 'user').length
 
     setLoading(true)
     try {
       const { reply, profile } = await conductGoalTurn(nextHistory)
-      addMessage({ role: 'reid', text: reply })
-      setConversationHistory([...nextHistory, { role: 'assistant', content: reply }])
+      convHistoryRef.current = [...nextHistory, { role: 'assistant', content: reply }]
 
-      if (profile) {
-        setGoalProfile(profile)
-        await pause(600)
-        await advanceToBaseline(profile)
+      // If Claude has all the info (≥3 user turns: name + motivation + interests)
+      // but didn't return a profile, build a fallback and advance rather than hanging.
+      const resolvedProfile = profile ?? (userTurnCount >= 3 ? buildFallbackProfile(nextHistory) : null)
+
+      // Clear loading before showing Reid's next message so the text is visible.
+      setLoading(false)
+
+      if (resolvedProfile) {
+        setGoalProfile(resolvedProfile)
+        await advanceToBaseline(resolvedProfile)
+      } else {
+        setMsg(reply)
+        setIsAnimating(true)
       }
     } catch (err) {
       console.error('[Goal] conductGoalTurn error:', err)
-      addMessage({ role: 'reid', text: "Sorry, I had trouble with that. Could you try again?" })
-    } finally {
       setLoading(false)
+      setMsg("Sorry, I had trouble with that. Could you try again?")
+      setIsAnimating(true)
     }
   }
 
-  async function handleGoalSkip() {
-    const profile = goalProfile ?? DEFAULT_GOAL_PROFILE
-    setGoalProfile(profile)
-    await advanceToBaseline(profile)
-  }
-
-  // ─── Baseline transition ──────────────────────────────────────────────────
+  // ── Baseline transition ───────────────────────────────────────────────────
   async function advanceToBaseline(profile: GoalProfile) {
-    const msg1 = "Thanks for sharing that! Now let me find the best starting point for you."
-    addMessage({ role: 'reid', text: msg1 })
-    await pause(typewriterDelay(msg1))
-    const msg2 = "I'll show you a few short passages. Read each one and let me know if it feels too easy, just right, or too hard."
-    addMessage({ role: 'reid', text: msg2 })
-    await pause(typewriterDelay(msg2))
     setPhase('baseline_loading')
+    await showReidMessage("Thanks for sharing that! Now let me find the best starting point for you.")
+    await showReidMessage("I'll show you a few short passages. Read each one and tell me if it feels too easy, just right, or too hard.")
+    setViewMode('loading')
     setLoading(true)
     try {
       const passages = await generateBaselinePassages()
       setBaselinePassages(passages)
       setPhase('baseline_reading')
+      setViewMode('reading')
     } catch (err) {
       console.error('[Baseline] generateBaselinePassages error:', err)
-      addMessage({ role: 'reid', text: "Something went wrong loading the passages. Please restart the app." })
+      setMsg("Something went wrong loading the passages. Please restart the app.")
+      setIsAnimating(true)
+      setViewMode('message')
     } finally {
       setLoading(false)
     }
   }
 
-  // ─── Step 2: Baseline rating ─────────────────────────────────────────────
-  // User rates each passage with one of three buttons.
-  // "too_hard" or "just_right" stops the baseline early and locks the level.
-  // "too_easy" advances to the next passage.
+  // ── Step 2: Baseline rating ───────────────────────────────────────────────
   async function handleBaselineRating(rating: PassageRating) {
     const passage = baselinePassages[currentBaselineIndex]
+    if (!passage) return
     const result: BaselineRoundResult = { level: passage.level, rating }
     const newRatings = [...baselineRatings, result]
     setBaselineRatings(newRatings)
 
-    const ratingMsg =
-      rating === 'too_easy' ? "Let's try something a bit more challenging." :
+    const msg =
+      rating === 'too_easy'   ? "Let's try something a bit more challenging." :
       rating === 'just_right' ? "Perfect — that's a great match for your level." :
-      "No worries, I'll find a better fit."
-    addMessage({ role: 'reid', text: ratingMsg })
-    await pause(typewriterDelay(ratingMsg))
+                                "No worries, I'll find a better fit."
+    await showReidMessage(msg)
 
     if (rating === 'too_hard' || rating === 'just_right') {
       const level = determineLevelFromRatings(newRatings)
@@ -245,7 +367,6 @@ export function DiagnosticScreen({ onComplete }: Props) {
       return
     }
 
-    // too_easy: advance or finish
     const nextIndex = currentBaselineIndex + 1
     if (nextIndex >= baselinePassages.length) {
       const level = determineLevelFromRatings(newRatings)
@@ -253,391 +374,462 @@ export function DiagnosticScreen({ onComplete }: Props) {
       await advanceToDomain(level, goalProfile ?? DEFAULT_GOAL_PROFILE)
     } else {
       setCurrentBaselineIndex(nextIndex)
+      setViewMode('reading')
     }
   }
 
-  // ─── Domain transition ────────────────────────────────────────────────────
+  // ── Domain transition ─────────────────────────────────────────────────────
   async function advanceToDomain(level: ReadingLevel, profile: GoalProfile) {
-    addMessage({ role: 'reid', text: `Now I'll show you a few texts from the ${DOMAIN_LABELS[profile.domain]} world — the kind of reading you actually want to do.` })
     setPhase('domain_loading')
+    await showReidMessage("Now I'll show you a few texts related to your interests.")
+    setViewMode('loading')
     setLoading(true)
     try {
-      const passages = await generateDomainPassages(profile.domain, level)
+      const passages = await generateDomainPassages(profile.interests, level)
       setDomainPassages(passages)
       setPhase('domain_reading')
+      setViewMode('reading')
     } catch (err) {
       console.error('[Domain] generateDomainPassages error:', err)
-      addMessage({ role: 'reid', text: "Something went wrong. Moving on to the speaking portion." })
       await advanceToSpeaking(level, profile)
     } finally {
       setLoading(false)
     }
   }
 
-  // ─── Step 3: Domain rating ────────────────────────────────────────────────
-  // All DOMAIN_PASSAGE_COUNT passages are shown regardless of rating.
-  // Ratings calibrate domain vocabulary comfort — they don't change the locked level.
+  // ── Step 3: Domain rating ─────────────────────────────────────────────────
   async function handleDomainRating(rating: PassageRating) {
-    const domainMsg =
-      rating === 'too_easy' ? "Good — that vocabulary feels familiar to you." :
+    const msg =
+      rating === 'too_easy'   ? "Good — that vocabulary feels familiar to you." :
       rating === 'just_right' ? "Great, that's a solid match for your domain." :
-      "We'll work on building that domain vocabulary."
-    addMessage({ role: 'reid', text: domainMsg })
-    await pause(typewriterDelay(domainMsg))
+                                "We'll work on building that domain vocabulary."
+    await showReidMessage(msg)
 
     const nextIndex = currentDomainIndex + 1
     if (nextIndex >= DOMAIN_PASSAGE_COUNT) {
       await advanceToSpeaking(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE)
     } else {
       setCurrentDomainIndex(nextIndex)
+      setViewMode('reading')
     }
   }
 
-  // ─── Speaking transition ──────────────────────────────────────────────────
+  // ── Speaking transition ───────────────────────────────────────────────────
   async function advanceToSpeaking(level: ReadingLevel, profile: GoalProfile) {
-    addMessage({ role: 'reid', text: "One last step — I'll have you read a short passage aloud so I can hear your voice." })
     setPhase('speaking_loading')
+    await showReidMessage("One last step, I'll have you read a short passage aloud so I can hear your voice.")
+    setViewMode('loading')
     setLoading(true)
     try {
       const granted = await requestAudioPermissions()
       if (!granted) {
-        addMessage({ role: 'reid', text: "Microphone permission is needed. Please enable it in Settings and restart the app." })
-        await handleFinalize(level, profile)
+        await handleFinalize(level, profile, [])
         return
       }
-      const passage = await generateSpeakingPassage(profile.domain, level)
+      const passage = await generateSpeakingPassage(profile.interests, level)
       setSpeakingPassage(passage)
       setPhase('speaking')
+      setViewMode('speaking')
     } catch (err) {
       console.error('[Speaking] generation error:', err)
-      addMessage({ role: 'reid', text: "Something went wrong. Moving on to your results." })
-      await handleFinalize(level, profile)
+      await handleFinalize(level, profile, [])
     } finally {
       setLoading(false)
     }
   }
 
-  // ─── Step 4: Speaking — record start ────────────────────────────────────
-  async function handleRecordStart() {
-    if (isRecording || isTranscribing) return
-    try {
-      const rec = await startRecording()
-      setActiveRecording(rec)
-      setIsRecording(true)
-    } catch (err) {
-      console.error('[Speaking] startRecording error:', err)
+  // ── Step 4: Speaking — tap to start, tap to stop ──────────────────────────
+  async function handleMicPress() {
+    if (isTranscribing) return
+    if (!isRecording) {
+      try {
+        const rec = await startRecording()
+        setActiveRecording(rec)
+        setIsRecording(true)
+        setRecordingSeconds(0)
+        recordingTimerRef.current = setInterval(() => {
+          setRecordingSeconds((s) => s + 1)
+        }, 1000)
+      } catch (err) {
+        console.error('[Speaking] startRecording error:', err)
+      }
+    } else {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current)
+        recordingTimerRef.current = null
+      }
+      setIsRecording(false)
+      await handleSpeakingStop()
     }
   }
 
-  // ─── Step 4: Speaking — record stop ─────────────────────────────────────
-  async function handleSpeakingRecordStop() {
-    if (!activeRecording || !isRecording) return
-    setIsRecording(false)
+  async function handleSpeakingStop() {
+    if (!activeRecording) return
     setIsTranscribing(true)
-
     try {
       const transcript = await stopAndTranscribe(activeRecording)
-      setActiveRecording(null as any)
-
+      setActiveRecording(null)
       const stumbleResult = await detectStumbleFromTranscript(speakingPassage!, transcript)
       const stumbles = stumbleResult.stumbledWords
-      setAllStumbles(stumbles)
-
-      const stumbleMsg = stumbles.length > 0
+      const msg = stumbles.length > 0
         ? "Great effort! I have everything I need to build your plan."
         : "Excellent reading — that was really clear!"
-      addMessage({ role: 'reid', text: stumbleMsg })
-      await pause(typewriterDelay(stumbleMsg))
-      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE)
+      await showReidMessage(msg)
+      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, stumbles)
     } catch (err) {
       console.error('[Speaking] recording/analysis error:', err)
-      addMessage({ role: 'reid', text: "I had trouble hearing that. Moving on to your results." })
-      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE)
+      await showReidMessage("I had trouble hearing that. Moving on to your results.")
+      await handleFinalize(lockedLevel ?? 'grade5', goalProfile ?? DEFAULT_GOAL_PROFILE, [])
     } finally {
       setIsTranscribing(false)
     }
   }
 
-  // ─── Finalization ─────────────────────────────────────────────────────────
-  async function handleFinalize(level: ReadingLevel, profile: GoalProfile) {
+  // ── Finalization ──────────────────────────────────────────────────────────
+  // Takes stumbles as a parameter to avoid stale closure over allStumbles state.
+  async function handleFinalize(level: ReadingLevel, profile: GoalProfile, stumbles: StumbledWord[]) {
     setPhase('finalizing')
-    addMessage({ role: 'reid', text: "Let me put together your results..." })
+    setViewMode('loading')
     setLoading(true)
-
     try {
-      const result = await buildDiagnosticResult(profile, level, allStumbles)
+      const result = await buildDiagnosticResult(profile, level, stumbles)
       console.log('[Diagnostic] Result:', JSON.stringify(result, null, 2))
-
       setReadingLevel(result.readingLevel)
-      await saveProfile({
-        userId,
-        goal: profile.motivation,
-        domain: profile.domain,
-        readingLevel: result.readingLevel,
-      })
-
-      console.log('[Diagnostic] Collected info:', JSON.stringify({
-        motivation: profile.motivation,
-        interests: profile.interests,
-        domain: profile.domain,
-        readingLevel: result.readingLevel,
-        weakAreas: result.weakAreas,
-        firstLessonSuggestion: result.firstLessonSuggestion,
-      }, null, 2))
-
-      addMessage({ role: 'reid', text: result.firstLessonSuggestion })
+      await saveProfile({ userId, goal: profile.motivation, interests: profile.interests, readingLevel: result.readingLevel })
       setPhase('result')
+      setLoading(false)
+      // Show result message; user presses Next → "Let's get started" button appears
+      await showReidMessage(result.firstLessonSuggestion)
     } catch (err) {
       console.error('[Diagnostic] handleFinalize error:', err)
-      addMessage({ role: 'reid', text: "Something went wrong calculating your results. Please restart and try again." })
-    } finally {
+      setPhase('result')
       setLoading(false)
+      await showReidMessage("Something went wrong calculating your results. Please restart and try again.")
     }
   }
 
-  // ─── Render helpers ───────────────────────────────────────────────────────
-  const showGoalInput = phase === 'goal_chat' && !loading
-  const showSkipButton = showGoalInput && goalTurnCount >= GOAL_TURN_LIMIT
-
+  // ── Derived values ────────────────────────────────────────────────────────
   const currentPassageText =
-    phase === 'baseline_reading' ? baselinePassages[currentBaselineIndex]?.text :
-    phase === 'domain_reading'   ? domainPassages[currentDomainIndex] :
-    phase === 'speaking'         ? speakingPassage :
+    viewMode === 'reading' && phase === 'baseline_reading' ? baselinePassages[currentBaselineIndex]?.text :
+    viewMode === 'reading' && phase === 'domain_reading'   ? domainPassages[currentDomainIndex] :
     null
 
-  const passageLabel =
-    phase === 'baseline_reading' ? `Passage ${currentBaselineIndex + 1} of ${BASELINE_LEVELS.length}` :
-    phase === 'domain_reading'   ? `Domain passage ${currentDomainIndex + 1} of ${DOMAIN_PASSAGE_COUNT}` :
-    'Read this aloud'
+  const currentStep = (() => {
+    switch (phase) {
+      case 'goal_chat':        return goalQuestionStep
+      case 'baseline_loading':
+      case 'baseline_reading': return 4
+      case 'domain_loading':
+      case 'domain_reading':   return 5
+      case 'speaking_loading':
+      case 'speaking':         return 6
+      case 'finalizing':       return 7
+      case 'result':           return 8
+      default:                 return 1
+    }
+  })()
 
-  const showRatingButtons = (phase === 'baseline_reading' || phase === 'domain_reading') && !loading
-  const showRecordButton  = phase === 'speaking' && !loading
-  const onRating = phase === 'baseline_reading' ? handleBaselineRating : handleDomainRating
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={80}
-    >
-      {/* ── Chat history ── */}
-      <ScrollView
-        ref={scrollRef}
-        style={styles.messages}
-        contentContainerStyle={styles.messagesContent}
-      >
-        {messages.map((msg, i) => (
-          <AnimatedBubble key={i}>
-            <View style={[styles.bubble, msg.role === 'reid' ? styles.reidBubble : styles.userBubble]}>
-              {msg.role === 'reid' && (
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>R</Text>
-                </View>
-              )}
-              <View style={[styles.bubbleText, msg.role === 'reid' ? styles.reidText : styles.userText]}>
-                {msg.role === 'reid' ? (
-                  <TypewriterText text={msg.text} style={styles.reidMessage} />
-                ) : (
-                  <Text style={styles.userMessage}>{msg.text}</Text>
+    <SafeAreaView style={s.safe}>
+
+      {/* ── Progress header ── */}
+      <ProgressHeader current={currentStep} />
+
+      {/* ── Phase label ── */}
+      <Text style={s.phaseLabel}>{PHASE_LABELS[phase] ?? 'DIAGNOSTIC'}</Text>
+
+      {/* ── Main centered area — text + TTS as a unit ── */}
+      <View style={s.main}>
+        {viewMode === 'loading' ? (
+          <LoadingGif size={80} />
+        ) : (viewMode === 'reading' || viewMode === 'speaking') ? (
+          <>
+            {/* Faded scrollable box — reading and speaking diagnostics only */}
+            <View style={s.textBox}>
+              <ScrollView
+                style={s.textScroll}
+                contentContainerStyle={s.textScrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {viewMode === 'reading' && currentPassageText != null && (
+                  <Text style={s.passageText}>{currentPassageText}</Text>
                 )}
+                {viewMode === 'speaking' && speakingPassage != null && (
+                  <Text style={s.passageText}>{speakingPassage}</Text>
+                )}
+              </ScrollView>
+              <View style={s.fadeTop} pointerEvents="none">
+                <LinearGradient colors={['rgba(242,237,227,1)', 'rgba(242,237,227,0)']} style={s.fadeFill} />
+              </View>
+              <View style={s.fadeBottom} pointerEvents="none">
+                <LinearGradient colors={['rgba(242,237,227,0)', 'rgba(242,237,227,1)']} style={s.fadeFill} />
               </View>
             </View>
-          </AnimatedBubble>
-        ))}
 
-        {/* Typing indicator while waiting for Claude or transcribing */}
-        {(loading || isTranscribing) && (
-          <AnimatedBubble>
-            <View style={[styles.bubble, styles.reidBubble]}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>R</Text></View>
-              <View style={[styles.bubbleText, styles.reidText]}>
-                <ActivityIndicator size="small" color="#6B7280" />
-              </View>
-            </View>
-          </AnimatedBubble>
+            {/* TTS button — reading only, not speaking */}
+            {viewMode === 'reading' && (
+              <TouchableOpacity style={s.speakerBtn} activeOpacity={0.7} onPress={() => {}}>
+                <Text style={s.speakerIcon}>🔊</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Goal chat / message — plain centered text, no box */}
+            {loading ? (
+              <LoadingGif size={60} />
+            ) : (
+              <TypewriterText
+                key={currentReidMessage}
+                text={currentReidMessage}
+                style={s.mainText}
+                onComplete={() => setIsAnimating(false)}
+              />
+            )}
+
+            {/* TTS button directly below text */}
+            <TouchableOpacity style={s.speakerBtn} activeOpacity={0.7} onPress={() => {}}>
+              <Text style={s.speakerIcon}>🔊</Text>
+            </TouchableOpacity>
+          </>
         )}
+      </View>
 
-        {/* Passage card — shown during Steps 2, 3, and 4 */}
-        {currentPassageText != null && (
-          <View style={styles.passageCard}>
-            <Text style={styles.passageLabel}>{passageLabel}</Text>
-            <Text style={styles.passageText}>{currentPassageText}</Text>
+      {/* ── Bottom action area — pinned to bottom ── */}
+      <View style={s.bottomArea}>
+
+        {/* Rating buttons — reading phases */}
+        {viewMode === 'reading' && currentPassageText != null && (
+          <View style={s.ratingRow}>
+            {(['too_easy', 'just_right', 'too_hard'] as PassageRating[]).map((r) => (
+              <TouchableOpacity
+                key={r}
+                style={s.ratingBtn}
+                activeOpacity={0.7}
+                onPress={() => phase === 'domain_reading' ? handleDomainRating(r) : handleBaselineRating(r)}
+              >
+                <Text style={s.ratingBtnText}>
+                  {r === 'too_easy' ? 'Too easy' : r === 'just_right' ? 'Just right' : 'Too hard'}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
-      </ScrollView>
 
-      {/* ── Step 2 & 3: Rating buttons ── */}
-      {showRatingButtons && (
-        <View style={styles.ratingRow}>
-          <TouchableOpacity
-            style={[styles.ratingBtn, styles.tooEasyBtn]}
-            onPress={() => onRating('too_easy')}
-          >
-            <Text style={styles.ratingBtnText}>Too Easy</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.ratingBtn, styles.justRightBtn]}
-            onPress={() => onRating('just_right')}
-          >
-            <Text style={styles.ratingBtnText}>Just Right</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.ratingBtn, styles.tooHardBtn]}
-            onPress={() => onRating('too_hard')}
-          >
-            <Text style={styles.ratingBtnText}>Too Hard</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        {/* Mic button — speaking phase */}
+        {viewMode === 'speaking' && (
+          <View style={s.micArea}>
+            {isRecording && (
+              <Text style={s.recordingTimer}>{recordingSeconds}s</Text>
+            )}
+            {isTranscribing ? (
+              <LoadingGif size={72} />
+            ) : (
+              <TouchableOpacity
+                style={[s.micBtn, isRecording && s.micBtnActive]}
+                activeOpacity={0.8}
+                onPress={handleMicPress}
+              >
+                <Text style={s.micIcon}>🎙</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
-      {/* ── Step 4: Record button ── */}
-      {showRecordButton && (
-        <View style={styles.recordRow}>
-          <Pressable
-            onPressIn={handleRecordStart}
-            onPressOut={handleSpeakingRecordStop}
-            style={[styles.recordBtn, isRecording && styles.recordBtnActive]}
-            disabled={isTranscribing}
-          >
-            <Text style={styles.recordBtnText}>
-              {isRecording ? '🎙 Recording...' : 'Hold to Read Aloud'}
-            </Text>
-          </Pressable>
-        </View>
-      )}
+        {/* Text input — animates up with keyboard; skip stays put and is covered */}
+        {viewMode === 'goal-input' && (
+          <Animated.View style={{ transform: [{ translateY: inputTranslateY }] }}>
+            <View style={s.inputRow}>
+              <TextInput
+                style={s.input}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="Type response, or speak it →"
+                placeholderTextColor={C.muted}
+                onSubmitEditing={handleGoalSend}
+                returnKeyType="send"
+                editable={!loading}
+              />
+              <TouchableOpacity style={s.inputMicBtn} activeOpacity={0.7} onPress={() => {}}>
+                <Text style={s.inputMicIcon}>🎙</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        )}
 
-      {/* ── Result: Continue button ── */}
-      {phase === 'result' && (
-        <View style={styles.continueRow}>
-          <TouchableOpacity style={styles.continueBtn} onPress={onComplete}>
-            <Text style={styles.continueBtnText}>Let's get started →</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* ── Step 1: Goal conversation input ── */}
-      {showGoalInput && (
-        <View style={styles.inputArea}>
-          {showSkipButton && (
-            <TouchableOpacity style={styles.skipBtn} onPress={handleGoalSkip}>
-              <Text style={styles.skipBtnText}>Skip to Reading Test →</Text>
+        {/* Wrapper measured so keyboard translation lands input just above keyboard */}
+        <View onLayout={(e) => { belowInputHeight.current = e.nativeEvent.layout.height }}>
+          {/* Let's get started — result phase after message acknowledged */}
+          {phase === 'result' && !hasPendingNext && (
+            <TouchableOpacity style={s.continueBtn} activeOpacity={0.8} onPress={onComplete}>
+              <Text style={s.continueBtnText}>Let's get started →</Text>
             </TouchableOpacity>
           )}
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="Type here..."
-              placeholderTextColor="#9CA3AF"
-              onSubmitEditing={handleGoalSend}
-              returnKeyType="send"
-              editable={!loading}
-            />
-            <TouchableOpacity
-              style={[styles.sendBtn, (!inputText.trim() || loading) && styles.sendBtnDisabled]}
-              onPress={handleGoalSend}
-              disabled={!inputText.trim() || loading}
-            >
-              <Text style={styles.sendBtnText}>Send</Text>
+
+          {/* Next ▶| / Skip ▶| — stays in place; covered by keyboard during input */}
+          {(phase !== 'result' || hasPendingNext) && (
+            <TouchableOpacity style={s.nextRow} onPress={handleNext}>
+              <Text style={s.nextText}>{hasPendingNext ? 'Next' : 'Skip'}{'  ▶|'}</Text>
             </TouchableOpacity>
-          </View>
+          )}
         </View>
-      )}
-    </KeyboardAvoidingView>
+
+      </View>
+    </SafeAreaView>
   )
 }
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
-function pause(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
-// Brand color: #4F46E5 (indigo). Replace all occurrences to retheme.
-// Recording active state uses #DC2626 (red) to signal the mic is live.
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  messages: { flex: 1 },
-  messagesContent: { padding: 16, paddingBottom: 8, flexGrow: 1, justifyContent: 'flex-end' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: C.bg },
 
-  bubble: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-end' },
-  reidBubble: { justifyContent: 'flex-start' },
-  userBubble: { justifyContent: 'flex-end' },
-
-  avatar: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#4F46E5',
-    alignItems: 'center', justifyContent: 'center', marginRight: 8,
+  phaseLabel: {
+    textAlign: 'center',
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: C.muted,
+    fontWeight: '600',
+    marginBottom: 4,
   },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 
-  bubbleText: { maxWidth: '75%', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
-  reidText: { backgroundColor: '#fff', borderBottomLeftRadius: 4 },
-  userText: { backgroundColor: '#4F46E5', borderBottomRightRadius: 4 },
-  reidMessage: { color: '#111827', fontSize: 15, lineHeight: 22 },
-  userMessage: { color: '#fff', fontSize: 15, lineHeight: 22 },
-
-  passageCard: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 16, marginVertical: 8,
-    borderLeftWidth: 4, borderLeftColor: '#4F46E5',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
+  // ── Main centered area ──
+  main: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
   },
-  passageLabel: { fontSize: 12, color: '#6B7280', marginBottom: 8, fontWeight: '600' },
-  passageText: { fontSize: 17, lineHeight: 28, color: '#1F2937' },
 
-  // ── Rating buttons (Steps 2 & 3) ──
+  // ── Scrollable text box ──
+  // maxHeight caps the box; ScrollView sizes to content up to that limit.
+  // Do NOT use flex:1 on the ScrollView — it collapses when the parent has no explicit height.
+  textBox: {
+    maxHeight: 390,
+    alignSelf: 'stretch',
+    marginHorizontal: 24,
+    position: 'relative',
+  },
+  textScroll: {
+    // no flex — let content drive height, capped by parent maxHeight
+  },
+  textScrollContent: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 24,
+  },
+  fadeTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+  },
+  fadeBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+  },
+  fadeFill: { flex: 1 },
+
+  mainText: {
+    fontSize: 28,
+    fontWeight: '600',
+    color: C.green,
+    textAlign: 'center',
+    lineHeight: 40,
+    paddingHorizontal: 32,
+  },
+
+  passageText: {
+    fontSize: 22,
+    fontWeight: '500',
+    color: C.green,
+    textAlign: 'center',
+    lineHeight: 34,
+  },
+
+  // ── TTS button — sits directly below textBox via gap in main ──
+  speakerBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: C.green,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.bg,
+  },
+  speakerIcon: { fontSize: 22 },
+
+  // ── Rating buttons ──
   ratingRow: {
-    flexDirection: 'row', gap: 8, padding: 16,
-    backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB',
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
   },
   ratingBtn: {
-    flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center',
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: C.green,
+    borderRadius: 20,
+    paddingVertical: 13,
+    alignItems: 'center',
+    backgroundColor: C.bg,
   },
-  tooEasyBtn: { backgroundColor: '#D1FAE5' },   // green tint
-  justRightBtn: { backgroundColor: '#4F46E5' },  // indigo
-  tooHardBtn: { backgroundColor: '#FEE2E2' },    // red tint
-  ratingBtnText: { fontWeight: '700', fontSize: 13, color: '#111827' },
+  ratingBtnText: { color: C.green, fontWeight: '500', fontSize: 13 },
 
-  // ── Record button (Step 4) ──
-  recordRow: {
-    padding: 16, backgroundColor: '#fff',
-    borderTopWidth: 1, borderTopColor: '#E5E7EB',
+  // ── Mic button ──
+  micArea: { alignItems: 'center', paddingVertical: 8, gap: 12 },
+  recordingTimer: { fontSize: 16, color: C.green, fontWeight: '600' },
+  micBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 1.5,
+    borderColor: C.green,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.bg,
   },
-  recordBtn: {
-    backgroundColor: '#4F46E5', borderRadius: 14,
-    paddingVertical: 16, alignItems: 'center',
-  },
-  recordBtnActive: { backgroundColor: '#DC2626' },
-  recordBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  micBtnActive: { backgroundColor: C.green },
+  micIcon: { fontSize: 28 },
 
-  // ── Continue button (result phase) ──
-  continueRow: {
-    padding: 16, backgroundColor: '#fff',
-    borderTopWidth: 1, borderTopColor: '#E5E7EB',
+  // ── Goal input ──
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    borderRadius: 28,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    backgroundColor: C.bg,
   },
+  input: { flex: 1, fontSize: 15, color: C.green },
+  inputMicBtn: { padding: 4 },
+  inputMicIcon: { fontSize: 18 },
+
+  // ── Continue (result) ──
   continueBtn: {
-    backgroundColor: '#4F46E5', borderRadius: 14,
-    paddingVertical: 16, alignItems: 'center',
+    marginHorizontal: 20,
+    backgroundColor: C.green,
+    borderRadius: 28,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 4,
   },
-  continueBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  continueBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
 
-  // ── Goal input (Step 1) ──
-  inputArea: {
-    backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB',
-  },
-  skipBtn: { paddingHorizontal: 16, paddingTop: 10 },
-  skipBtnText: { color: '#6B7280', fontSize: 13, textDecorationLine: 'underline' },
-  inputRow: { flexDirection: 'row', padding: 12, gap: 8 },
-  input: {
-    flex: 1, backgroundColor: '#F3F4F6', borderRadius: 24,
-    paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#111827',
-  },
-  sendBtn: {
-    backgroundColor: '#4F46E5', borderRadius: 24,
-    paddingHorizontal: 20, justifyContent: 'center',
-  },
-  sendBtnDisabled: { backgroundColor: '#C7D2FE' },
-  sendBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  // ── Bottom area ──
+  bottomArea: { paddingBottom: 8, gap: 4 },
+
+  // ── Next / Skip ──
+  nextRow: { alignItems: 'center', paddingVertical: 12 },
+  nextText: { color: C.muted, fontSize: 14 },
 })
