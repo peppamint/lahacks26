@@ -1,18 +1,47 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { MicroLesson } from './modules/micro-lessons/MicroLesson'
+import { DiagnosticScreen } from './modules/diagnostic/DiagnosticScreen'
 import { useStore } from './store'
 import LessonMap from './screens/LessonMap'
+import { getCurrentUser, signInAnonymously } from './services/supabase'
+
+const DIAGNOSTIC_KEY = 'diagnostic_complete'
 
 export default function App() {
+  const userId         = useStore((s) => s.userId)
   const setUserId      = useStore((s) => s.setUserId)
   const activeLessonId = useStore((s) => s.activeLessonId)
   const setActiveLessonId = useStore((s) => s.setActiveLessonId)
 
+  // null = loading, false = needs diagnostic, true = done
+  const [diagnosticDone, setDiagnosticDone] = useState<boolean | null>(null)
+
   useEffect(() => {
-    setUserId('550e8400-e29b-41d4-a716-446655440000') // TODO: replace with real auth
+    async function init() {
+      try {
+        let user = await getCurrentUser()
+        if (!user) user = await signInAnonymously()
+        if (user) setUserId(user.id)
+      } catch (e) {
+        console.error('[Auth] anonymous sign-in failed:', e)
+      }
+      try {
+        const val = await AsyncStorage.getItem(DIAGNOSTIC_KEY)
+        setDiagnosticDone(val === 'true')
+      } catch {
+        setDiagnosticDone(false)
+      }
+    }
+    init()
   }, [setUserId])
+
+  async function handleDiagnosticComplete() {
+    await AsyncStorage.setItem(DIAGNOSTIC_KEY, 'true')
+    setDiagnosticDone(true)
+  }
 
   // Build lesson config from whichever lesson the user tapped on the map.
   // TODO: swap documentText for a real Supabase fetch keyed on activeLessonId.
@@ -23,16 +52,19 @@ export default function App() {
     domain: 'general' as const,
   }
 
+  if (diagnosticDone === null) return null
+
   return (
     <View style={styles.root}>
-      <StatusBar style="light" />
+      <StatusBar style={diagnosticDone ? 'light' : 'dark'} />
 
-      {activeLessonId ? (
+      {!diagnosticDone ? (
+        // ── DIAGNOSTIC ─────────────────────────────────────────────
+        <DiagnosticScreen onComplete={handleDiagnosticComplete} />
+      ) : activeLessonId ? (
         // ── LESSON SCREEN ──────────────────────────────────────────
-        // Shown when the user taps "Start Lesson" on the map.
-        // onComplete returns them to the map and clears the active lesson.
         <MicroLesson
-          userId="550e8400-e29b-41d4-a716-446655440000"
+          userId={userId}
           config={lessonConfig}
           onComplete={() => setActiveLessonId(null)}
         />
