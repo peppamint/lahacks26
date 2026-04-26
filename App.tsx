@@ -71,7 +71,8 @@ export default function App() {
   useEffect(() => {
     async function init() {
       
-      await AsyncStorage.getItem(DIAGNOSTIC_KEY)
+      await AsyncStorage.removeItem(DIAGNOSTIC_KEY) 
+
       // Auth: get existing session or create an anonymous one.
       try {
         let user = await getCurrentUser()
@@ -99,7 +100,6 @@ export default function App() {
   }, [setUserId])
 
   function handleDiagnosticComplete() {
-    AsyncStorage.setItem(DIAGNOSTIC_KEY, 'true').catch(() => {})
     setDiagnosticDone(true)
   }
 
