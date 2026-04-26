@@ -51,6 +51,7 @@ export default function App() {
   const [microQuestions, setMicroQuestions] = useState<LessonQuestion[] | null>(null)
   // Non-null when lesson config/question fetch fails — shown to the user on the map screen.
   const [lessonLoadError, setLessonLoadError] = useState<string | null>(null)
+  const [lessonMapLoading, setLessonMapLoading] = useState(false)
 
   // DEV: unlock all lessons so the last one is immediately accessible.
   // Toggle DEV_UNLOCK_LAST_LESSON at the top of the file to enable.
@@ -111,6 +112,7 @@ export default function App() {
     if (!diagnosticDone) return
 
     async function loadLessonMapItems() {
+      setLessonMapLoading(true)
       try {
         // Ensure the demo advanced lesson row exists before fetching the map.
         await ensureDemoAdvancedLesson(interests)
@@ -139,6 +141,8 @@ export default function App() {
           title: lesson.title,
         }))
         setLessonMapItems(offlineFallback)
+      } finally {
+        setLessonMapLoading(false)
       }
     }
 
