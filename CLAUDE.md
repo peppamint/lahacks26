@@ -29,42 +29,77 @@ An AI-powered adult literacy app that meets learners where they are — from tot
 ```
 /
 ├── CLAUDE.md                  ← you are here
-├── app/                       ← Expo Router file-based routing
-│   ├── (onboarding)/          ← goal-setting + diagnostic flow
-│   ├── (lessons)/             ← micro + macro lesson screens
-│   ├── (progress)/            ← stats, word bank
-│   └── (tools)/               ← plain-english mode, doc scanner
-├── modules/                   ← FEATURE MODULES (one per teammate)
-│   ├── diagnostic/
-│   ├── micro-lessons/
-│   ├── macro-lessons/
-│   ├── plain-english/
-│   ├── speech/
-│   ├── progress/
-│   └── offline/
-├── services/                  ← shared API clients (never import directly from modules)
-│   ├── claude.ts              ← all Anthropic API calls
-│   ├── supabase.ts            ← DB + auth
-│   ├── whisper.ts             ← STT
-│   ├── elevenlabs.ts          ← TTS
-│   └── ocr.ts                 ← Google ML Kit
-├── store/                     ← Zustand global state slices
-│   ├── userSlice.ts
-│   ├── lessonSlice.ts
-│   └── progressSlice.ts
+├── App.tsx                    ← root application entry
+├── app.json                   ← Expo config
+├── package.json
+├── tsconfig.json
+├── index.ts
+├── assets/                    ← static assets
 ├── components/                ← shared UI primitives only
 │   ├── Button.tsx
 │   ├── AudioPlayer.tsx
 │   ├── ReadingCard.tsx
 │   └── ProgressChart.tsx
+├── modules/                   ← FEATURE MODULES (one per teammate)
+│   ├── diagnostic/
+│   │   ├── DiagnosticFlow.ts
+│   │   ├── index.ts
+│   │   └── types.ts
+│   ├── micro-lessons/
+│   │   ├── MicroLesson.tsx
+│   │   ├── index.ts
+│   │   └── types.ts
+│   ├── macro-lessons/
+│   │   ├── MacroLesson.tsx
+│   │   ├── index.ts
+│   │   └── types.ts
+│   ├── plain-english/
+│   │   ├── PlainEnglishReader.tsx
+│   │   ├── templates.ts
+│   │   ├── index.ts
+│   │   └── types.ts
+│   ├── speech/
+│   │   ├── stumbleDetection.ts
+│   │   ├── types.ts
+│   │   ├── index.ts
+│   │   └── hooks/
+│   │       ├── useSpeechRecognition.ts
+│   │       └── useTextToSpeech.ts
+│   └── progress/
+│       ├── ProgressDashboard.tsx
+│       ├── WordBank.tsx
+│       ├── types.ts
+│       ├── index.ts
+│       └── hooks/
+│           └── useProgress.ts
+├── services/                  ← shared API clients (never import directly from modules)
+│   ├── claude.ts              ← all Anthropic API calls
+│   ├── supabase.ts            ← DB + auth
+│   ├── whisper.ts             ← STT
+│   ├── elevenlabs.ts          ← TTS
+│   ├── elevanlabs.test.ts     ← TTS tests
+│   ├── ocr.ts                 ← Google ML Kit
+│   └── vocabBank.ts           ← vocabulary bank service
+├── store/                     ← Zustand global state slices
+│   ├── index.ts
+│   ├── userSlice.ts
+│   ├── lessonSlice.ts
+│   └── progressSlice.ts
 ├── hooks/                     ← shared React hooks
-│   ├── useSpeechRecognition.ts
-│   └── useOfflineSync.ts
+│   └── useSpeechRecognition.ts
 ├── constants/
 │   ├── readingLevels.ts       ← Lexile / grade-level definitions
 │   └── domains.ts             ← curriculum domain tags
-└── types/
-    └── index.ts               ← shared TypeScript interfaces
+├── types/
+│   └── index.ts               ← shared TypeScript interfaces
+├── utils/
+│   └── eventBus.ts            ← inter-module event bus (mitt)
+└── supabase/                  ← Supabase Edge Functions
+    └── functions/
+        ├── tts-proxy/
+        │   └── index.ts
+        └── whisper-api/
+            └── index.ts
 ```
 
 ---
@@ -179,22 +214,6 @@ export type { ProgressStats, WordBankEntry } from './types'
 
 ---
 
-### Module 7 — `offline/`
-**Responsibility:** Downloadable lesson packs + offline-first data layer.
-
-Key tasks:
-- Package lessons (text, audio, questions) into SQLite via Expo SQLite
-- Background sync: upload completed lesson results when connectivity returns
-- Offline detection hook (`useOfflineStatus`)
-- Wrap Whisper and TTS service calls with offline fallback
-
-Exports:
-```ts
-export { OfflinePack } from './OfflinePack'
-export { useOfflineStatus } from './hooks/useOfflineStatus'
-export { syncPendingResults } from './sync'
-```
-
 ---
 
 ## Shared Services (Do Not Duplicate)
@@ -221,6 +240,24 @@ export const HAIKU  = 'claude-haiku-4-5-20251001'
 
 ### `services/supabase.ts`
 Single initialized Supabase client. Auth, user profiles, progress rows, word bank entries.
+
+### `services/progress.ts`
+```ts
+// Fetch aggregated progress stats for a user
+export async function fetchProgressStats(userId: string): Promise<ProgressStats | null>
+
+// Fetch today's progress (words learned + lessons completed today)
+export async function fetchTodayProgress(userId: string): Promise<{
+  wordsLearnedToday: number
+  grammarStructuresLearned: number
+}>
+
+// Fetch all words in user's word bank
+export async function fetchWordBank(userId: string): Promise<WordBankEntry[]>
+
+// Fetch reading level progression over time
+export async function fetchReadingLevelTrend(userId: string): Promise<{ date: string; level: string }[]>
+```
 
 ### `services/whisper.ts`
 ```ts

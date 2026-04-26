@@ -84,7 +84,6 @@ export interface ProgressStats {
   lessonsCompleted: number
   wordsLearned: number
   averageScore: number
-  readingLevel: import('../constants/readingLevels').ReadingLevel
   lastUpdated: string
 }
 
