@@ -2,7 +2,7 @@ export type { ReadingLevel } from '../constants/readingLevels'
 export type { Domain } from '../constants/domains'
 export type { SkillCategory, SkillLevels } from '../constants/skills'
 
-// ─── User / Diagnostic ────────────────────────────────────────────────────────
+// ─── User / Profile ───────────────────────────────────────────────────────────
 
 export interface UserProfile {
   userId: string
@@ -12,9 +12,18 @@ export interface UserProfile {
   skillLevels?: import('../constants/skills').SkillLevels
 }
 
+// ─── Diagnostic ───────────────────────────────────────────────────────────────
+
 export interface DiagnosticResult {
-  estimatedLevel: import('../constants/readingLevels').ReadingLevel
-  stumbledWords: StumbledWord[]
+  readingLevel: import('../constants/readingLevels').ReadingLevel
+  domain: import('../constants/domains').Domain
+  // Patterns identified from stumbled words across all reading phases,
+  // e.g. ['multi-syllable words', 'punctuation pausing']
+  weakAreas: string[]
+  // 'micro' for grade3 and below; 'macro' for grade5 and above
+  recommendedLessonType: 'micro' | 'macro'
+  // Claude-generated 2-sentence personalized first lesson description
+  firstLessonSuggestion: string
   completedAt: string
 }
 
